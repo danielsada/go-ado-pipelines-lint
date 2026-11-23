@@ -1,0 +1,4 @@
+azure-pipelines.yml:12:14: error [ADO103] stage "Test" depends on unknown stage "Biuld"
+templates/build.yml:7:9: info [ADO701/SC2086] Double quote to prevent globbing and word splitting.
+
+1 error, 0 warnings, 1 info message in 2 files.

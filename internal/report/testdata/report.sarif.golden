@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "adolint",
+          "version": "1.2.3",
+          "informationUri": "https://github.com/danielsada/go-ado-pipelines-lint",
+          "rules": [
+            {
+              "id": "ADO103",
+              "name": "unknown-dependency",
+              "shortDescription": {
+                "text": "Unknown dependency."
+              },
+              "helpUri": "https://example.com/ado103",
+              "defaultConfiguration": {
+                "level": "error"
+              }
+            },
+            {
+              "id": "ADO701",
+              "name": "shellcheck",
+              "shortDescription": {
+                "text": "ShellCheck finding."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              }
+            },
+            {
+              "id": "ADO701/SC2086",
+              "name": "shellcheck/SC2086",
+              "shortDescription": {
+                "text": "ShellCheck finding. (SC2086)"
+              },
+              "helpUri": "https://www.shellcheck.net/wiki/SC2086",
+              "defaultConfiguration": {
+                "level": "note"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "ADO103",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {
+            "text": "stage \"Test\" depends on unknown stage \"Biuld\""
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "azure-pipelines.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 12,
+                  "startColumn": 14,
+                  "endLine": 12,
+                  "endColumn": 19
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "ADO701/SC2086",
+          "ruleIndex": 2,
+          "level": "note",
+          "message": {
+            "text": "Double quote to prevent globbing and word splitting."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "templates/build.yml",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 9
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
