@@ -1,0 +1,5 @@
+parameters:
+  configuration: Release
+  unusedBagEntry: x
+steps:
+- script: build ${{ parameters.configuration }}

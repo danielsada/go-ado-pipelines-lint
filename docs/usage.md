@@ -1,6 +1,6 @@
 ---
 title: Usage
-nav_order: 2
+nav_order: 3
 permalink: /usage/
 ---
 {% raw %}
@@ -64,10 +64,7 @@ The exit code is `0` when there are no findings at or above `--fail-on`. It is `
 
 ### Azure Pipelines
 
-```yaml
-- script: adolint lint --format text
-  displayName: Lint pipelines
-```
+See [Use in CI](../azure-pipelines/) for a reusable template and copy-paste install steps.
 
 ## How templates are handled
 

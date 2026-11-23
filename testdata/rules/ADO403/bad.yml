@@ -9,3 +9,4 @@ steps:
   env:
     MY_SECRET: hunter2hunter2  # want: ADO403
     MY_TOKEN: $(token)
+    DB_CONNECTION_STRING: Server=db;Database=app;Password=hunter2;  # want: ADO403

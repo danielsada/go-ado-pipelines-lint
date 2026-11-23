@@ -1,0 +1,6 @@
+trigger: none
+steps:
+- script: ./scan.sh
+  env:
+    AzureServicesAuthConnectionString: RunAs=App;AppId=00000000-0000-0000-0000-000000000000;TenantId=00000000-0000-0000-0000-000000000000;
+    SQL_CONNECTION_STRING: Server=db;Database=app;Integrated Security=true

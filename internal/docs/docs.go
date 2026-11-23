@@ -180,7 +180,7 @@ func profileSection(id, tool, key, parse string, recommended, excluded []string,
 
 func index(reg *lint.Registry) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "---\ntitle: Rules\nnav_order: 3\nhas_children: true\npermalink: /rules/\n---\n%s{%% raw %%}\n", Header)
+	fmt.Fprintf(&b, "---\ntitle: Rules\nnav_order: 4\nhas_children: true\npermalink: /rules/\n---\n%s{%% raw %%}\n", Header)
 	b.WriteString("# Rules\n\nThese are all the rules adolint can report. Run `adolint explain <ID>` to see the same information in a terminal.\n\n")
 	for _, cat := range categories {
 		fmt.Fprintf(&b, "## %s\n\n| ID | Name | Default | Summary |\n| --- | --- | --- | --- |\n", cat)

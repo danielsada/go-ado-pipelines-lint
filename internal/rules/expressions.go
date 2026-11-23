@@ -231,6 +231,9 @@ func checkUndeclaredParams(c *lint.SourceContext) {
 }
 
 func checkUnusedParams(c *lint.SourceContext) {
+	if !template.StrictParams(c.Params) {
+		return // map-form parameter bags are usually forwarded to other templates
+	}
 	use := parameterRefs(collectExpressions(c.Src.Root), nil)
 	if use.whole {
 		return

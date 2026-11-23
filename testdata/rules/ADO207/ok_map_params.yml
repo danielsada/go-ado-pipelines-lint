@@ -1,0 +1,3 @@
+trigger: none
+steps:
+- template: bag.yml

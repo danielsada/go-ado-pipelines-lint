@@ -106,7 +106,7 @@ extends:
           bogusKey: 1
 `,
 	})
-	got := summary(run(t, dir, nil, nil, "azure-pipelines.yml"))
+	got := summary(run(t, dir, nil, map[string]diag.Severity{"ADO202": diag.Info}, "azure-pipelines.yml"))
 	if strings.Contains(got, "ADO103") {
 		t.Errorf("stages passed to a remote template may depend on stages it adds: %s", got)
 	}

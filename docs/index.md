@@ -37,7 +37,8 @@ Script linting is optional. It uses tools on your `PATH`, which are not bundled:
 
 ## Next steps
 
-- [Usage](usage/): commands, flags, output formats and CI integration.
+- [Use in CI](azure-pipelines/): a reusable Azure Pipelines template, copy-paste install steps and GitHub Actions.
+- [Usage](usage/): commands, flags and output formats.
 - [Configuration](configuration/): `.adolint.yaml` and inline suppressions.
 - [Rules](rules/): one page per rule, with examples.
 {% endraw %}

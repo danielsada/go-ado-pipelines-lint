@@ -291,6 +291,23 @@ func (e *Engine) finalize(diags []diag.Diagnostic, sources []*yamlx.Source) []di
 	}
 	out = diag.Dedupe(out)
 	diag.Sort(out)
+	return onePerMessage(out, "ADO202")
+}
+
+// onePerMessage keeps only the first diagnostic of a rule for each distinct message, e.g. one
+// "template not resolved" note per remote template across all linted pipelines.
+func onePerMessage(ds []diag.Diagnostic, rule string) []diag.Diagnostic {
+	seen := map[string]bool{}
+	out := ds[:0]
+	for _, d := range ds {
+		if d.RuleID == rule {
+			if seen[d.Message] {
+				continue
+			}
+			seen[d.Message] = true
+		}
+		out = append(out, d)
+	}
 	return out
 }
 

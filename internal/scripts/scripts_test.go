@@ -203,7 +203,7 @@ func TestLintProfiles(t *testing.T) {
 		want string
 	}{
 		{"recommended", LintOptions{},
-			"ADO701/SC2086@11:10:info ADO701/SC1009@12:7:error ADO702/MissingEndCurlyBrace@20:13:error ADO702/PSAvoidUsingInvokeExpression@20:11:warning"},
+			"ADO701/SC1009@12:7:error ADO702/MissingEndCurlyBrace@20:13:error ADO702/PSAvoidUsingInvokeExpression@20:11:warning"},
 		{"all", LintOptions{ShellCheck: config.Tool{Profile: "all"}, PSScriptAnalyzer: config.Tool{Profile: "all"}},
 			"ADO701/SC2086@11:10:info ADO701/SC1009@12:7:error ADO701/SC2250@10:8:info ADO702/PSAvoidUsingWriteHost@20:9:warning ADO702/MissingEndCurlyBrace@20:13:error ADO702/PSAvoidUsingInvokeExpression@20:11:warning"},
 		{"include and exclude", LintOptions{ShellCheck: config.Tool{Include: []string{"SC2154"}, Exclude: []string{"SC2086"}}, PSScriptAnalyzer: config.Tool{Profile: "none"}},
@@ -246,7 +246,7 @@ func TestRealTools(t *testing.T) {
 		return false
 	}
 	scripts := extract(t, pipelineYAML, Options{})
-	opts := LintOptions{Require: os.Getenv("ADOLINT_INTEGRATION") != ""}
+	opts := LintOptions{Require: os.Getenv("ADOLINT_INTEGRATION") != "", ShellCheck: config.Tool{Profile: "all"}}
 	if need("shellcheck") {
 		ds, err := Lint(context.Background(), ExecRunner{}, scripts[:3], opts)
 		if err != nil {
