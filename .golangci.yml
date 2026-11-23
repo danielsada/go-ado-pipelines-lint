@@ -1,0 +1,61 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - revive
+    - misspell
+    - gocyclo
+  settings:
+    gocyclo:
+      min-complexity: 50
+    revive:
+      rules:
+        - name: blank-imports
+        - name: exported
+        - name: unreachable-code
+        - name: dot-imports
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: increment-decrement
+        - name: var-naming
+        - name: range
+        - name: receiver-naming
+        - name: indent-error-flow
+        - name: superfluous-else
+        - name: file-length-limit
+          arguments:
+            - max: 1000
+        - name: max-control-nesting
+          arguments:
+            - 4
+    misspell:
+      locale: US
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - misspell
+        text: "Cancelled"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
