@@ -375,7 +375,7 @@ func (a *App) rulesCmd() *cobra.Command {
 
 func writeRulesText(w io.Writer, reg *lint.Registry) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "ID\tSEVERITY\tNAME\tSUMMARY"); err != nil {
+	if _, err := fmt.Fprintln(tw, "ID\tSEVERITY\tNAME\tSUMMARY\tDOCS"); err != nil {
 		return err
 	}
 	for _, r := range reg.All() {
@@ -384,7 +384,7 @@ func writeRulesText(w io.Writer, reg *lint.Registry) error {
 		if m.DisabledByDefault {
 			sev += " (off)"
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", m.ID, sev, m.Name, m.Summary); err != nil {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", m.ID, sev, m.Name, m.Summary, m.DocsURL()); err != nil {
 			return err
 		}
 	}
@@ -451,7 +451,7 @@ func explain(w io.Writer, m *lint.Meta) error {
 	if m.HelpURI != "" {
 		fmt.Fprintf(&b, "\nReference: %s\n", m.HelpURI)
 	}
-	fmt.Fprintf(&b, "Docs: %s\n", m.DocsURL())
+	fmt.Fprintf(&b, "Docs: %s\nQuestions or false positives: %s\n", m.DocsURL(), lint.IssuesURL)
 	fmt.Fprintf(&b, "\nDisable with `# adolint:disable-next-line %s` or `rules: {%s: off}` in .adolint.yaml.\n", m.ID, m.ID)
 	_, err := io.WriteString(w, b.String())
 	return err

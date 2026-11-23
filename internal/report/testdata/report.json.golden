@@ -15,7 +15,8 @@
       "line": 12,
       "column": 14,
       "endLine": 12,
-      "endColumn": 19
+      "endColumn": 19,
+      "docsUrl": "https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO103/"
     },
     {
       "ruleId": "ADO701",
@@ -25,7 +26,8 @@
       "message": "Double quote to prevent globbing and word splitting.",
       "file": "templates/build.yml",
       "line": 7,
-      "column": 9
+      "column": 9,
+      "docsUrl": "https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO701/"
     }
   ]
 }

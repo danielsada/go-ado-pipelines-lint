@@ -110,8 +110,9 @@ func page(r lint.Rule, order int, v *schema.Validator) string {
 	fmt.Fprintf(&b, "Or on the command line: `adolint lint --disable %s` or `--enable %s`.\n\n", m.ID, m.ID)
 	fmt.Fprintf(&b, "Suppress a single finding with a comment on the line before it (or `disable-line` at the end of the line):\n\n```yaml\n# adolint:disable-next-line %s\n```\n\n", m.ID)
 	if m.HelpURI != "" {
-		fmt.Fprintf(&b, "## References\n\n- <%s>\n", m.HelpURI)
+		fmt.Fprintf(&b, "## References\n\n- <%s>\n\n", m.HelpURI)
 	}
+	fmt.Fprintf(&b, "## Questions and feedback\n\nQuestions about %s, or a false positive? [Open an issue](%s/new?title=%s%%3A+) with the YAML that triggered it.\n", m.ID, lint.IssuesURL, m.ID)
 	b.WriteString("{% endraw %}\n")
 	return b.String()
 }

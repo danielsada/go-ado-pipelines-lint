@@ -3,6 +3,7 @@ package lint
 
 import (
 	"fmt"
+	"strings"
 
 	"go.yaml.in/yaml/v3"
 
@@ -32,7 +33,19 @@ type Meta struct {
 }
 
 // DocsURL returns the URL of the rule's documentation page.
-func (m *Meta) DocsURL() string { return DocsBaseURL + "rules/" + m.ID + "/" }
+func (m *Meta) DocsURL() string { return DocsURL(m.ID) }
+
+// DocsURL returns the documentation page for a rule ID. Sub-rule IDs such as ADO701/SC2086 link to
+// their parent rule.
+func DocsURL(id string) string {
+	if i := strings.IndexByte(id, '/'); i >= 0 {
+		id = id[:i]
+	}
+	return DocsBaseURL + "rules/" + id + "/"
+}
+
+// IssuesURL is where questions and false-positive reports go.
+const IssuesURL = "https://github.com/danielsada/go-ado-pipelines-lint/issues"
 
 // Category returns the rule's group, derived from its ID.
 func (m *Meta) Category() string {
