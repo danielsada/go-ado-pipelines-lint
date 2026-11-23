@@ -1,0 +1,14 @@
+parameters:
+- name: linux
+  type: boolean
+  default: true
+trigger: none
+jobs:
+- ${{ if parameters.linux }}:
+  - job: Build
+    steps:
+    - script: echo linux
+- ${{ else }}:
+  - job: Build
+    steps:
+    - script: echo windows

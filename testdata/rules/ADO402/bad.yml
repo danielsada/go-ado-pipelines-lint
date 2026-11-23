@@ -1,0 +1,3 @@
+trigger: none  # want: ADO402
+steps:
+- script: echo

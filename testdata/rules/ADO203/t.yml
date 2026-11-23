@@ -1,0 +1,6 @@
+parameters:
+- name: config
+  type: string
+  default: Debug
+steps:
+- script: build ${{ parameters.config }}

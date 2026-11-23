@@ -1,0 +1,11 @@
+trigger: none
+resources:
+  repositories:
+  - repository: templates
+    type: git
+    name: shared/templates
+stages:
+- template: stages.yml@templates
+- stage: Test
+  dependsOn: BuildFromTemplate
+  jobs: []

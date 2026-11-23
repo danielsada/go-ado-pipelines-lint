@@ -1,0 +1,19 @@
+parameters:
+- name: branch
+  type: string
+  default: main
+trigger:
+  branches:
+    include:
+    - ${{ parameters.branch }}  # want: ADO304
+resources:
+  repositories:
+  - repository: tools
+    type: git
+    name: ${{ parameters.branch }}  # want: ADO304
+    ref: ${{ parameters.branch }}
+  containers:
+  - container: c
+    image: ${{ parameters.branch }}
+steps:
+- script: echo

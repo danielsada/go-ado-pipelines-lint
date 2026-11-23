@@ -1,0 +1,5 @@
+parameters:
+- name: environment
+  type: string
+steps:
+- script: deploy ${{ parameters.environment }}

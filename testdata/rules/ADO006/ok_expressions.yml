@@ -1,0 +1,12 @@
+parameters:
+- name: coe
+  type: boolean
+  default: false
+trigger: none
+steps:
+- script: echo
+  continueOnError: ${{ parameters.coe }}
+- task: Bash@3
+  inputs:
+    targetType: $(type)
+    script: echo

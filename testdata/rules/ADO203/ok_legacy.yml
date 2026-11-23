@@ -1,0 +1,9 @@
+trigger: none
+steps:
+- template: legacy.yml
+  parameters:
+    platform: linux
+    shell: unix
+- template: none.yml
+  parameters:
+    anything: 1

@@ -1,0 +1,14 @@
+trigger: none
+pool:
+  vmImage: ubuntu-20.04  # want: ADO404
+jobs:
+- job: A
+  pool:
+    vmImage: windows-2019  # want: ADO404
+  steps:
+  - script: echo
+- job: B
+  pool:
+    vmImage: ubuntu-latest
+  steps:
+  - script: echo

@@ -1,0 +1,5 @@
+parameters:
+  platform: none
+steps:
+- ${{ if ne(parameters.flavor, '') }}:
+  - script: echo ${{ parameters.platform }}

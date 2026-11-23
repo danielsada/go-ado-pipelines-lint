@@ -1,0 +1,7 @@
+trigger: none
+jobs:
+- job: A
+  steps:
+  - script: echo
+steps:  # want: ADO004
+- script: echo

@@ -1,0 +1,27 @@
+trigger: none
+pr: none
+pool: Default
+jobs:
+- job: Windows
+  pool:
+    vmImage: windows-latest
+  steps:
+  - powershell: Write-Host "hello from $env:COMPUTERNAME"
+  - script: echo %PATH%
+- job: Parallel
+  strategy:
+    parallel: 3
+  pool:
+    name: Self-Hosted
+    demands:
+    - agent.os -equals Linux
+  timeoutInMinutes: 30
+  steps:
+  - script: echo slice $(System.JobPositionInPhase)
+  - task: Bash@3
+    inputs:
+      targetType: inline
+      script: |
+        if [ -n "${SYSTEM_DEBUG:-}" ]; then
+          echo "debug"
+        fi

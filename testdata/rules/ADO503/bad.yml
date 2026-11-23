@@ -1,0 +1,7 @@
+trigger: none
+steps:
+- task: AzureCLI@2
+  inputs:  # want: ADO503
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: az account show

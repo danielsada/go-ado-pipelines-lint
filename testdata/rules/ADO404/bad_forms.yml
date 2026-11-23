@@ -1,0 +1,23 @@
+trigger: none
+jobs:
+- job: A
+  pool:
+    vmIMage: windows-2019  # want: ADO404
+  steps:
+  - script: echo
+- job: B
+  pool:
+    vmImage: 'Ubuntu 18.04'  # want: ADO404
+  steps:
+  - script: echo
+- job: C
+  strategy:
+    matrix:
+      old:
+        image_name: macOS-12  # want: ADO404
+      new:
+        image_name: macOS-15
+  pool:
+    vmImage: $(image_name)
+  steps:
+  - script: echo

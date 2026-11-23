@@ -1,0 +1,12 @@
+trigger: none
+steps:
+- script: echo
+  condition: or(eq(variables.env, 'prod'), true)  # want: ADO601
+- script: echo
+  condition: false  # want: ADO601
+- script: echo
+  condition: and(succeeded(), eq('a', 'b'))  # want: ADO601
+- script: echo
+  condition: always()
+- script: echo
+  condition: and(succeeded(), eq(variables.env, 'prod'))

@@ -1,0 +1,7 @@
+trigger: none
+extends:
+  template: templates/secure-base.yml
+  parameters:
+    buildSteps:
+    - script: echo user build
+      displayName: User build

@@ -1,0 +1,16 @@
+trigger: none
+stages:
+- stage: A
+  condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')  # want: ADO603
+  jobs:
+  - job: J
+    condition: and(succeeded(), eq(variables.x, 'y'))
+    steps:
+    - script: echo
+      condition: in(variables['Agent.JobStatus'], 'Succeeded')
+    - script: echo
+      condition: ne(variables.skip, 'true')  # want: ADO603
+- stage: B
+  dependsOn: A
+  condition: eq(dependencies.A.result, 'Succeeded')
+  jobs: []

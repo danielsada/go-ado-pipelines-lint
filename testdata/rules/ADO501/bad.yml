@@ -1,0 +1,8 @@
+trigger: none
+steps:
+- task: PowerShell@3  # want: ADO501
+- task: MyCompany.Custom@1  # want: ADO501
+- task: PowerShell@2
+  inputs:
+    targetType: inline
+    script: echo

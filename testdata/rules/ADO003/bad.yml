@@ -1,0 +1,12 @@
+trigger: none
+stages:
+- stage: Build
+  jobs:
+  - job: A
+    dependOn: B  # want: ADO003
+    steps:
+    - script: echo
+      dispalyName: x  # want: ADO003
+    - task: Bash@3
+      input:  # want: ADO003
+        script: echo

@@ -1,0 +1,6 @@
+trigger: none
+variables:
+  tag: v-$[counter('v', 1)]  # want: ADO303
+  ok: $[counter('v', 1)]
+steps:
+- script: echo

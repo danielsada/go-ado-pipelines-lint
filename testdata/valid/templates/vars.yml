@@ -1,0 +1,2 @@
+variables:
+  dotnetVersion: '8.x'

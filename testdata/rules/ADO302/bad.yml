@@ -1,0 +1,7 @@
+trigger: none
+variables:
+  v: $[ counter('x') ]  # want: ADO302
+steps:
+- script: echo
+  condition: and(succeeded(), equals(variables.a, 'b'))  # want: ADO302
+- script: echo ${{ upper() }}  # want: ADO302

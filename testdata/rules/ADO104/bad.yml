@@ -1,0 +1,18 @@
+trigger: none
+jobs:
+- job: A
+  dependsOn: C  # want: ADO104
+  steps:
+  - script: echo
+- job: B
+  dependsOn: A
+  steps:
+  - script: echo
+- job: C
+  dependsOn: B
+  steps:
+  - script: echo
+- job: D
+  dependsOn: D  # want: ADO104
+  steps:
+  - script: echo

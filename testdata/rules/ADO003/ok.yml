@@ -1,0 +1,16 @@
+trigger: none
+stages:
+- stage: Build
+  displayName: Build it
+  jobs:
+  - job: A
+    timeoutInMinutes: 10
+    workspace:
+      clean: all
+    steps:
+    - checkout: self
+      fetchDepth: 1
+    - script: echo
+      displayName: x
+      env:
+        ANYTHING: goes

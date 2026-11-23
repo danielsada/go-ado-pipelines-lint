@@ -1,0 +1,7 @@
+trigger: none
+steps:
+- template: t.yml
+  parameters:
+    runTests: maybe  # want: ADO205
+    config: Relase  # want: ADO205
+    extra: not-a-list  # want: ADO205

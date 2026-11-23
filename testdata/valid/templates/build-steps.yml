@@ -1,0 +1,18 @@
+parameters:
+- name: configuration
+  type: string
+  default: Debug
+- name: extraSteps
+  type: stepList
+  default: []
+steps:
+- task: UseDotNet@2
+  inputs:
+    packageType: sdk
+    version: $(dotnetVersion)
+- script: dotnet build --configuration ${{ parameters.configuration }}
+  displayName: Build
+- ${{ each step in parameters.extraSteps }}:
+  - ${{ step }}
+- script: dotnet test --configuration ${{ parameters.configuration }} --no-build
+  displayName: Test

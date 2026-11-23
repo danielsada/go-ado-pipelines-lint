@@ -1,0 +1,4 @@
+trigger: none
+steps:
+- task: PublishPipelineArtifact  # want: ADO105
+- task: PublishPipelineArtifact@1

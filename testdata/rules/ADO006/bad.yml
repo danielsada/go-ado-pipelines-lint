@@ -1,0 +1,9 @@
+trigger: none
+stages:
+- stage: A
+  lockBehavior: latest  # want: ADO006
+  jobs:
+  - job: B
+    steps:
+    - script: echo
+      continueOnError: maybe  # want: ADO006

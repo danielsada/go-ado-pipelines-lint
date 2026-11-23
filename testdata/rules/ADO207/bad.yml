@@ -1,0 +1,10 @@
+parameters:
+- name: used
+  type: string
+  default: a
+- name: unused  # want: ADO207
+  type: string
+  default: b
+trigger: none
+steps:
+- script: echo ${{ parameters.used }}

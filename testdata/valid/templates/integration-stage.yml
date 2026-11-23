@@ -1,0 +1,13 @@
+parameters:
+- name: suites
+  type: object
+  default: []
+stages:
+- stage: Integration
+  dependsOn: Build
+  jobs:
+  - ${{ each suite in parameters.suites }}:
+    - job: Test_${{ suite }}
+      displayName: Integration ${{ suite }}
+      steps:
+      - script: ./run-tests.sh --suite "${{ suite }}"
