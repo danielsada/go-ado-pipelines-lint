@@ -49,15 +49,15 @@ The exit code is `0` when there are no findings at or above `--fail-on`. It is `
 
 ## Output formats
 
-- **text**: `file:line:col: severity [RULE] message`, then a summary line.
-- **json**: `{"version", "summary", "diagnostics": [{"ruleId", "subRule", "name", "severity", "message", "file", "line", "column", "endLine", "endColumn"}]}`.
+- **text**: `file:line:col: severity [RULE] message`, then a summary line and a link to the documentation page of each reported rule.
+- **json**: `{"version", "summary", "diagnostics": [{"ruleId", "subRule", "name", "severity", "message", "file", "line", "column", "endLine", "endColumn", "docsUrl"}]}`.
 - **sarif**: [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html), with URIs relative to the repository root. Each rule's `helpUri` links to its page on this site.
 
 ### GitHub code scanning
 
 ```yaml
 - run: adolint lint -f sarif -o adolint.sarif --fail-on none
-- uses: github/codeql-action/upload-sarif@v3
+- uses: github/codeql-action/upload-sarif@v4
   with:
     sarif_file: adolint.sarif
 ```

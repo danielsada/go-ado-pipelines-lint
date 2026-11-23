@@ -63,14 +63,14 @@ Exit codes: `0` means no findings at or above `--fail-on`, `1` means findings, `
 
 ### Output formats
 
-- **text**: `file:line:col: severity [RULE] message`, then a summary line.
-- **json**: `{"version", "summary": {"error", "warning", "info"}, "diagnostics": [{"ruleId", "subRule", "name", "severity", "message", "file", "line", "column", "endLine", "endColumn"}]}`
+- **text**: `file:line:col: severity [RULE] message`, then a summary line and a link to the documentation page of each reported rule.
+- **json**: `{"version", "summary": {"error", "warning", "info"}, "diagnostics": [{"ruleId", "subRule", "name", "severity", "message", "file", "line", "column", "endLine", "endColumn", "docsUrl"}]}`
 - **sarif**: [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html), with URIs relative to the repository root. Upload it to GitHub code scanning or publish it from Azure Pipelines to show findings in PRs:
 
 ```yaml
 # GitHub Actions
 - run: adolint lint -f sarif -o adolint.sarif --fail-on none
-- uses: github/codeql-action/upload-sarif@v3
+- uses: github/codeql-action/upload-sarif@v4
   with:
     sarif_file: adolint.sarif
 ```
@@ -176,46 +176,46 @@ Each rule has a page with details, examples and configuration at `https://daniel
 
 | ID | Name | Default | Summary |
 | --- | --- | --- | --- |
-| ADO001 | `yaml-syntax` | error | The file is not valid YAML. |
-| ADO002 | `duplicate-key` | error | A mapping defines the same key twice. |
-| ADO003 | `unknown-property` | error | A property is not allowed by the Azure Pipelines schema. |
-| ADO004 | `invalid-root` | error | The pipeline root mixes stages, jobs, steps or extends. |
-| ADO005 | `missing-required` | error | A required property is missing. |
-| ADO006 | `invalid-value` | error | A value has the wrong type or is not an allowed value. |
-| ADO007 | `deprecated-syntax` | warning | Deprecated syntax or a deprecated task version is used. |
-| ADO101 | `invalid-identifier` | error | A stage or job name is not a valid identifier. |
-| ADO102 | `duplicate-name` | error | Two stages, jobs in a stage, or steps in a job share a name. |
-| ADO103 | `unknown-dependency` | error | dependsOn references a stage or job that doesn't exist. |
-| ADO104 | `dependency-cycle` | error | Stages or jobs depend on each other in a cycle. |
-| ADO105 | `task-version-missing` | error | A task reference has no major version. |
-| ADO201 | `invalid-template-reference` | error | A local template can't be found or doesn't fit where it is used. |
-| ADO202 | `template-not-resolved` | info | A template wasn't expanded, so its contents aren't linted. |
-| ADO203 | `unexpected-parameter` | error | A parameter is passed that the template doesn't declare. |
-| ADO204 | `missing-parameter` | error | A required template parameter is not passed. |
-| ADO205 | `parameter-value-invalid` | error | A parameter value doesn't match the declared type or allowed values. |
-| ADO206 | `undeclared-parameter-reference` | warning | An expression references a parameter the file doesn't declare. |
-| ADO207 | `unused-parameter` | info | A declared parameter is never used. |
-| ADO208 | `template-limits` | error | Template includes form a cycle or exceed documented limits. |
-| ADO301 | `expression-syntax` | error | An expression or template directive is malformed. |
-| ADO302 | `invalid-function` | error | An unknown function is called, or a function has the wrong number of arguments. |
-| ADO303 | `runtime-expression-partial` | warning | A runtime expression $[ ] is mixed with other text. |
-| ADO304 | `template-expression-unsupported-location` | warning | ${{ }} is used where template expressions aren't expanded. |
-| ADO401 | `implicit-ci-trigger` | warning | No trigger is defined, so CI runs for every branch. |
-| ADO402 | `implicit-pr-trigger` | info (off by default) | No pr trigger is defined, so PR validation runs for every branch. |
-| ADO403 | `hardcoded-secret` | warning | A secret-looking variable has a literal value. |
-| ADO404 | `retired-vm-image` | warning | A Microsoft-hosted image is retired or deprecated. |
-| ADO405 | `continue-on-error` | info | continueOnError: true hides failures. |
-| ADO501 | `unknown-task` | info | The task isn't a known built-in task or version. |
-| ADO502 | `invalid-task-input` | warning | A task input isn't defined for this built-in task version, or has a value outside its allowed list. |
-| ADO503 | `missing-task-input` | warning | A required input of a built-in task is missing. |
-| ADO601 | `constant-condition` | warning | A condition is always true or always false. |
-| ADO602 | `constant-template-if` | warning | A ${{ if }} or ${{ elseif }} is always true or always false. |
-| ADO603 | `condition-overrides-succeeded` | warning | A custom condition doesn't check job status. |
-| ADO604 | `always-runs-on-cancel` | info | always() also runs when the run is canceled. |
-| ADO605 | `dependency-not-declared` | warning | dependencies.X is used without depending on X. |
-| ADO701 | `shellcheck` | per finding | ShellCheck finding in an inline bash script. |
-| ADO702 | `psscriptanalyzer` | per finding | PSScriptAnalyzer finding in an inline PowerShell script. |
-| ADO703 | `script-linter-unavailable` | info | ShellCheck or PSScriptAnalyzer isn't installed, so scripts weren't linted. |
+| [ADO001](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO001/) | `yaml-syntax` | error | The file is not valid YAML. |
+| [ADO002](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO002/) | `duplicate-key` | error | A mapping defines the same key twice. |
+| [ADO003](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO003/) | `unknown-property` | error | A property is not allowed by the Azure Pipelines schema. |
+| [ADO004](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO004/) | `invalid-root` | error | The pipeline root mixes stages, jobs, steps or extends. |
+| [ADO005](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO005/) | `missing-required` | error | A required property is missing. |
+| [ADO006](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO006/) | `invalid-value` | error | A value has the wrong type or is not an allowed value. |
+| [ADO007](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO007/) | `deprecated-syntax` | warning | Deprecated syntax or a deprecated task version is used. |
+| [ADO101](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO101/) | `invalid-identifier` | error | A stage or job name is not a valid identifier. |
+| [ADO102](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO102/) | `duplicate-name` | error | Two stages, jobs in a stage, or steps in a job share a name. |
+| [ADO103](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO103/) | `unknown-dependency` | error | dependsOn references a stage or job that doesn't exist. |
+| [ADO104](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO104/) | `dependency-cycle` | error | Stages or jobs depend on each other in a cycle. |
+| [ADO105](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO105/) | `task-version-missing` | error | A task reference has no major version. |
+| [ADO201](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO201/) | `invalid-template-reference` | error | A local template can't be found or doesn't fit where it is used. |
+| [ADO202](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO202/) | `template-not-resolved` | info | A template wasn't expanded, so its contents aren't linted. |
+| [ADO203](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO203/) | `unexpected-parameter` | error | A parameter is passed that the template doesn't declare. |
+| [ADO204](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO204/) | `missing-parameter` | error | A required template parameter is not passed. |
+| [ADO205](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO205/) | `parameter-value-invalid` | error | A parameter value doesn't match the declared type or allowed values. |
+| [ADO206](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO206/) | `undeclared-parameter-reference` | warning | An expression references a parameter the file doesn't declare. |
+| [ADO207](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO207/) | `unused-parameter` | info | A declared parameter is never used. |
+| [ADO208](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO208/) | `template-limits` | error | Template includes form a cycle or exceed documented limits. |
+| [ADO301](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO301/) | `expression-syntax` | error | An expression or template directive is malformed. |
+| [ADO302](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO302/) | `invalid-function` | error | An unknown function is called, or a function has the wrong number of arguments. |
+| [ADO303](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO303/) | `runtime-expression-partial` | warning | A runtime expression $[ ] is mixed with other text. |
+| [ADO304](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO304/) | `template-expression-unsupported-location` | warning | ${{ }} is used where template expressions aren't expanded. |
+| [ADO401](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO401/) | `implicit-ci-trigger` | warning | No trigger is defined, so CI runs for every branch. |
+| [ADO402](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO402/) | `implicit-pr-trigger` | info (off by default) | No pr trigger is defined, so PR validation runs for every branch. |
+| [ADO403](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO403/) | `hardcoded-secret` | warning | A secret-looking variable has a literal value. |
+| [ADO404](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO404/) | `retired-vm-image` | warning | A Microsoft-hosted image is retired or deprecated. |
+| [ADO405](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO405/) | `continue-on-error` | info | continueOnError: true hides failures. |
+| [ADO501](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO501/) | `unknown-task` | info | The task isn't a known built-in task or version. |
+| [ADO502](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO502/) | `invalid-task-input` | warning | A task input isn't defined for this built-in task version, or has a value outside its allowed list. |
+| [ADO503](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO503/) | `missing-task-input` | warning | A required input of a built-in task is missing. |
+| [ADO601](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO601/) | `constant-condition` | warning | A condition is always true or always false. |
+| [ADO602](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO602/) | `constant-template-if` | warning | A ${{ if }} or ${{ elseif }} is always true or always false. |
+| [ADO603](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO603/) | `condition-overrides-succeeded` | warning | A custom condition doesn't check job status. |
+| [ADO604](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO604/) | `always-runs-on-cancel` | info | always() also runs when the run is canceled. |
+| [ADO605](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO605/) | `dependency-not-declared` | warning | dependencies.X is used without depending on X. |
+| [ADO701](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO701/) | `shellcheck` | per finding | ShellCheck finding in an inline bash script. |
+| [ADO702](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO702/) | `psscriptanalyzer` | per finding | PSScriptAnalyzer finding in an inline PowerShell script. |
+| [ADO703](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO703/) | `script-linter-unavailable` | info | ShellCheck or PSScriptAnalyzer isn't installed, so scripts weren't linted. |
 
 ## Development
 

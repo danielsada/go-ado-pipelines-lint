@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/danielsada/go-ado-pipelines-lint/internal/diag"
@@ -60,7 +61,32 @@ func Text(w io.Writer, ds []diag.Diagnostic, opts Options) error {
 		return err
 	}
 	_, err := fmt.Fprintf(w, "\n%s, %s, %s%s.\n", plural(c[diag.Error], "error"), plural(c[diag.Warning], "warning"), plural(c[diag.Info], "info message"), files)
-	return err
+	if err != nil {
+		return err
+	}
+	return ruleLinks(w, ds)
+}
+
+// ruleLinks lists the documentation page of every rule that was reported.
+func ruleLinks(w io.Writer, ds []diag.Diagnostic) error {
+	seen := map[string]bool{}
+	var ids []string
+	for _, d := range ds {
+		if !seen[d.RuleID] {
+			seen[d.RuleID] = true
+			ids = append(ids, d.RuleID)
+		}
+	}
+	sort.Strings(ids)
+	if _, err := fmt.Fprintln(w, "\nRule docs (questions or false positives: "+lint.IssuesURL+"):"); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if _, err := fmt.Fprintf(w, "  %s  %s\n", id, lint.DocsURL(id)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type jsonDiag struct {
@@ -74,6 +100,7 @@ type jsonDiag struct {
 	Column    int    `json:"column"`
 	EndLine   int    `json:"endLine,omitempty"`
 	EndColumn int    `json:"endColumn,omitempty"`
+	DocsURL   string `json:"docsUrl"`
 }
 
 type jsonReport struct {
@@ -89,7 +116,7 @@ func JSON(w io.Writer, ds []diag.Diagnostic, reg *lint.Registry, opts Options) e
 		Summary: map[string]int{"error": c[diag.Error], "warning": c[diag.Warning], "info": c[diag.Info]}}
 	for _, d := range ds {
 		jd := jsonDiag{RuleID: d.RuleID, SubRule: d.SubRule, Severity: d.Severity.String(), Message: d.Message,
-			File: d.File, Line: d.Line, Column: d.Column, EndLine: d.EndLine, EndColumn: d.EndColumn}
+			File: d.File, Line: d.Line, Column: d.Column, EndLine: d.EndLine, EndColumn: d.EndColumn, DocsURL: lint.DocsURL(d.RuleID)}
 		if rule, ok := reg.Get(d.RuleID); ok {
 			jd.Name = rule.Meta().Name
 		}
