@@ -1,0 +1,10 @@
+trigger: none
+stages:
+- stage: Build_1
+  jobs:
+  - job: _linux
+    steps:
+    - script: echo
+  - job:
+    steps:
+    - script: echo

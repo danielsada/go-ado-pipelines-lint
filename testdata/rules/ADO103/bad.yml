@@ -1,0 +1,16 @@
+trigger: none
+stages:
+- stage: Build
+  jobs:
+  - job: A
+    steps:
+    - script: echo
+  - job: B
+    dependsOn:
+    - A
+    - C  # want: ADO103
+    steps:
+    - script: echo
+- stage: Test
+  dependsOn: Biuld  # want: ADO103
+  jobs: []

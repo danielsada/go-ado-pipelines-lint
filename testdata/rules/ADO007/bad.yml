@@ -1,0 +1,5 @@
+trigger: none
+steps:
+- task: AzurePowerShell@2  # want: ADO007
+  inputs:
+    ScriptPath: run.ps1

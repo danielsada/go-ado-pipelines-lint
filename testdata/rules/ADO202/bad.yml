@@ -1,0 +1,9 @@
+trigger: none
+resources:
+  repositories:
+  - repository: templates
+    type: git
+    name: shared/templates
+steps:
+- template: steps.yml@templates  # want: ADO202
+- template: ${{ variables.dynamic }}  # want: ADO202

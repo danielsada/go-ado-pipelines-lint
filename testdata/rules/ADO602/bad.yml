@@ -1,0 +1,25 @@
+parameters:
+- name: env
+  type: string
+  default: dev
+  values: [dev, prod]
+- name: flag
+  type: boolean
+  default: false
+- name: free
+  type: string
+  default: x
+trigger: none
+steps:
+- ${{ if eq(parameters.env, 'production') }}:  # want: ADO602
+  - script: echo never
+- ${{ if or(parameters.flag, not(parameters.flag)) }}:  # want: ADO602
+  - script: echo always
+- ${{ else }}:
+  - script: echo unreachable
+- ${{ if eq(parameters.env, 'prod') }}:
+  - script: echo sometimes
+- ${{ if eq(parameters.free, 'y') }}:
+  - script: echo unknown
+- ${{ if true }}:  # want: ADO602
+  - script: echo literal

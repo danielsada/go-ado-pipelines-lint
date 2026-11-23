@@ -1,0 +1,6 @@
+trigger: none
+steps:
+- template: t.yml  # want: ADO204
+- template: t.yml
+  parameters:
+    environment: prod

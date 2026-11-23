@@ -1,0 +1,11 @@
+trigger: none
+variables:
+  apiToken: 3f9a8c7d6e5b4a  # want: ADO403
+  tokenUrl: https://example.com/token
+  usePassword: true
+  dbPassword: $(dbPasswordSecret)
+steps:
+- script: ./run.sh
+  env:
+    MY_SECRET: hunter2hunter2  # want: ADO403
+    MY_TOKEN: $(token)

@@ -1,0 +1,9 @@
+parameters:
+- name: config
+  type: string
+  default: Debug
+trigger: none
+steps:
+- script: build ${{ parameters.config }} ${{ parameters.configuration }}  # want: ADO206
+- ${{ if eq(parameters['target'], 'x') }}:  # want: ADO206
+  - script: echo

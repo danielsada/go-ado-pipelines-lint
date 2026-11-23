@@ -1,0 +1,12 @@
+trigger: none
+steps:
+- task: Bash@3
+  inputs:
+    targetType: inline
+    scrpt: echo  # want: ADO502
+- task: AzureCLI@2
+  inputs:
+    ConnectedServiceNameARM: conn
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: echo

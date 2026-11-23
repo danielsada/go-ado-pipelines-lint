@@ -1,0 +1,7 @@
+parameters:
+- name: a
+  type: string
+  default: x
+trigger: none
+steps:
+- script: echo '${{ convertToJson(parameters) }}'

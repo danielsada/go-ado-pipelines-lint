@@ -1,0 +1,19 @@
+parameters:
+- name: buildSteps
+  type: stepList
+  default: []
+- name: poolImage
+  type: string
+  default: ubuntu-latest
+stages:
+- stage: Secure
+  pool:
+    vmImage: ${{ parameters.poolImage }}
+  jobs:
+  - job: Build
+    steps:
+    - script: echo before
+    - ${{ each step in parameters.buildSteps }}:
+      - ${{ each pair in step }}:
+          ${{ pair.key }}: ${{ pair.value }}
+    - script: echo after

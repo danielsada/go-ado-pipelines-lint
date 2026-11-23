@@ -1,0 +1,3 @@
+trigger: none
+steps:
+- bash: echo $[1+2

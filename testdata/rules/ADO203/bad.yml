@@ -1,0 +1,5 @@
+trigger: none
+steps:
+- template: t.yml
+  parameters:
+    confg: Release  # want: ADO203

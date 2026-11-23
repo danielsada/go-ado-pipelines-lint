@@ -1,0 +1,9 @@
+trigger: none
+steps:
+- script: echo ${{ parameters.x   # want: ADO301
+- script: echo
+  condition: and(succeeded(), eq(variables.a, 'b')  # want: ADO301
+- ${{ if }}:  # want: ADO301
+  - script: echo
+- ${{ each in parameters.list }}:  # want: ADO301
+  - script: echo

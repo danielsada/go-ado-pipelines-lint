@@ -1,0 +1,15 @@
+trigger: none
+stages:
+- stage: A
+  jobs:
+  - job: Build
+    steps:
+    - script: echo
+      name: step1
+    - script: echo
+      name: step1  # want: ADO102
+  - job: build  # want: ADO102
+    steps:
+    - script: echo
+- stage: a  # want: ADO102
+  jobs: []

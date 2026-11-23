@@ -1,0 +1,15 @@
+parameters:
+- name: runTests
+  type: boolean
+  default: true
+- name: config
+  type: string
+  default: Debug
+  values: [Debug, Release]
+- name: extra
+  type: stepList
+  default: []
+steps:
+- ${{ if parameters.runTests }}:
+  - script: test ${{ parameters.config }}
+- ${{ parameters.extra }}

@@ -1,0 +1,13 @@
+trigger: none
+stages:
+- stage: A
+  lockBehavior: latest  # want: ADO006
+  jobs:
+  - job: B
+    steps:
+    - script: echo
+      continueOnError: maybe  # want: ADO006
+    - task: Bash@3
+      inputs:
+        targetType: sometimes  # want: ADO006
+        script: echo

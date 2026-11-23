@@ -1,0 +1,7 @@
+trigger: none
+resources:
+  repositories:
+  - type: github  # want: ADO005
+    name: org/repo
+steps:
+- displayName: nothing  # want: ADO005

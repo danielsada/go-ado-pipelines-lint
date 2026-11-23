@@ -1,0 +1,153 @@
+trigger:
+  branches:
+    include: [main, releases/*]
+  paths:
+    exclude: [docs/*]
+pr:
+- main
+schedules:
+- cron: '0 3 * * 1-5'
+  displayName: Nightly
+  branches:
+    include: [main]
+  always: true
+
+parameters:
+- name: environment
+  displayName: Target environment
+  type: string
+  default: staging
+  values: [staging, production]
+- name: runIntegration
+  type: boolean
+  default: true
+
+variables:
+- group: shared-settings
+- name: buildConfiguration
+  value: Release
+- name: isMain
+  value: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
+- template: templates/vars.yml
+
+resources:
+  repositories:
+  - repository: tools
+    type: github
+    endpoint: github-connection
+    name: contoso/tools
+    ref: refs/heads/main
+  containers:
+  - container: node
+    image: node:20
+  pipelines:
+  - pipeline: upstream
+    source: Upstream-CI
+    trigger:
+      branches:
+        include: [main]
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+- stage: Build
+  displayName: Build and test
+  jobs:
+  - job: Build
+    strategy:
+      matrix:
+        linux:
+          imageName: ubuntu-latest
+        mac:
+          imageName: macOS-latest
+      maxParallel: 2
+    pool:
+      vmImage: $(imageName)
+    steps:
+    - checkout: self
+      fetchDepth: 1
+    - checkout: tools
+    - template: templates/build-steps.yml
+      parameters:
+        configuration: $(buildConfiguration)
+        extraSteps:
+        - script: echo "extra step on $(Agent.OS)"
+          displayName: Extra
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: $(Build.ArtifactStagingDirectory)
+        artifact: drop-$(imageName)
+  - job: Lint
+    container: node
+    steps:
+    - bash: |
+        set -euo pipefail
+        npm ci
+        npm run lint -- --max-warnings=0
+      displayName: Lint
+      env:
+        CI: "true"
+  - job: Report
+    dependsOn:
+    - Build
+    - Lint
+    condition: succeededOrFailed()
+    steps:
+    - pwsh: |
+        $files = Get-ChildItem -Path "$(Pipeline.Workspace)" -Recurse
+        Write-Output "Found $($files.Count) files"
+      displayName: Summarize
+- ${{ if parameters.runIntegration }}:
+  - template: templates/integration-stage.yml
+    parameters:
+      suites: [api, ui]
+- stage: Deploy
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables.isMain, 'true'))
+  variables:
+    artifactName: drop
+  jobs:
+  - deployment: DeployWeb
+    displayName: Deploy web app
+    environment: ${{ parameters.environment }}
+    strategy:
+      runOnce:
+        preDeploy:
+          steps:
+          - script: echo preparing
+        deploy:
+          steps:
+          - download: current
+            artifact: drop-ubuntu-latest
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: prod-connection
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az webapp deploy --name "contoso-web" --src-path "$(Pipeline.Workspace)/drop"
+        on:
+          failure:
+            steps:
+            - script: echo rollback
+  - deployment: DeployVMs
+    environment:
+      name: vms
+      resourceType: VirtualMachine
+    strategy:
+      rolling:
+        maxParallel: 2
+        deploy:
+          steps:
+          - script: echo deploying to $(Environment.ResourceName)
+  - deployment: Canary
+    pool:
+      vmImage: ubuntu-latest
+    environment: aks.default
+    strategy:
+      canary:
+        increments: [10, 20]
+        deploy:
+          steps:
+          - script: echo canary

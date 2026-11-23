@@ -1,0 +1,9 @@
+trigger: none
+jobs:
+- job: A
+  continueOnError: true  # want: ADO405
+  steps:
+  - script: echo
+    continueOnError: true  # want: ADO405
+  - script: echo
+    continueOnError: false

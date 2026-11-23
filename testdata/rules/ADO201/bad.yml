@@ -1,0 +1,4 @@
+trigger: none
+jobs:
+- template: templates/missing.yml  # want: ADO201
+- template: templates/steps.yml  # want: ADO201
