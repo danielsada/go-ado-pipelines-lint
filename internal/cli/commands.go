@@ -313,8 +313,12 @@ func (a *App) runExtract(f *extractFlags, file string) error {
 	eng.Expand(en)
 	x := scripts.NewExtractor(scripts.Options{ScriptShell: s.cfg.Scripts.ScriptShell})
 	x.Add(en.Model)
+	for _, m := range lint.ExtendsParameterPipelines(en) {
+		x.Add(m)
+	}
+	found := x.Scripts()
 	if f.out == "" {
-		for _, sc := range x.Scripts {
+		for _, sc := range found {
 			if _, err = fmt.Fprintf(a.Stdout, "# --- %s:%d:%d (%s, %s)\n%s\n", sc.File, sc.Line, sc.Column, sc.Source, sc.Lang, strings.TrimRight(sc.Text, "\n")); err != nil {
 				return err
 			}
@@ -329,7 +333,7 @@ func (a *App) runExtract(f *extractFlags, file string) error {
 		return usageErr("%v", err)
 	}
 	manifest := []manifestEntry{}
-	for _, sc := range x.Scripts {
+	for _, sc := range found {
 		base := strings.TrimSuffix(filepath.Base(sc.File), filepath.Ext(sc.File))
 		name := fmt.Sprintf("%03d-%s-L%d%s", sc.ID+1, base, sc.Line, sc.Lang.Ext())
 		if err = os.WriteFile(filepath.Join(out, name), []byte(sc.Text), 0o644); err != nil {
@@ -344,7 +348,7 @@ func (a *App) runExtract(f *extractFlags, file string) error {
 	if err = os.WriteFile(filepath.Join(out, "manifest.json"), append(b, '\n'), 0o644); err != nil {
 		return usageErr("%v", err)
 	}
-	_, err = fmt.Fprintf(a.Stdout, "Wrote %d script(s) to %s\n", len(x.Scripts), out)
+	_, err = fmt.Fprintf(a.Stdout, "Wrote %d script(s) to %s\n", len(found), out)
 	return err
 }
 
@@ -395,6 +399,7 @@ type ruleJSON struct {
 	Summary          string `json:"summary"`
 	Description      string `json:"description"`
 	HelpURI          string `json:"helpUri,omitempty"`
+	DocsURL          string `json:"docsUrl"`
 }
 
 func writeRulesJSON(w io.Writer, reg *lint.Registry) error {
@@ -402,7 +407,7 @@ func writeRulesJSON(w io.Writer, reg *lint.Registry) error {
 	for _, r := range reg.All() {
 		m := r.Meta()
 		out = append(out, ruleJSON{ID: m.ID, Name: m.Name, Severity: m.Severity.String(), EnabledByDefault: !m.DisabledByDefault,
-			Summary: m.Summary, Description: m.Description, HelpURI: m.HelpURI})
+			Summary: m.Summary, Description: m.Description, HelpURI: m.HelpURI, DocsURL: m.DocsURL()})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	enc := json.NewEncoder(w)
@@ -444,8 +449,9 @@ func explain(w io.Writer, m *lint.Meta) error {
 		fmt.Fprintf(&b, "\nInstead:\n\n%s\n", indent(m.Good))
 	}
 	if m.HelpURI != "" {
-		fmt.Fprintf(&b, "\nDocs: %s\n", m.HelpURI)
+		fmt.Fprintf(&b, "\nReference: %s\n", m.HelpURI)
 	}
+	fmt.Fprintf(&b, "Docs: %s\n", m.DocsURL())
 	fmt.Fprintf(&b, "\nDisable with `# adolint:disable-next-line %s` or `rules: {%s: off}` in .adolint.yaml.\n", m.ID, m.ID)
 	_, err := io.WriteString(w, b.String())
 	return err

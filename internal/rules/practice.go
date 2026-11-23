@@ -40,8 +40,12 @@ var (
 	nonSecretRe    = regexp.MustCompile(`(?i)^(true|false|yes|no|on|off|none|null|\d{1,3})$`)
 )
 
-func looksSecret(name string, value *yaml.Node) bool {
+// looksSecret reports whether a secret-named value is a literal in the source (not produced by an expression).
+func looksSecret(c *lint.PipelineContext, name string, value *yaml.Node) bool {
 	if !secretNameRe.MatchString(name) || secretExceptRe.MatchString(name) || !yamlx.IsScalar(value) {
+		return false
+	}
+	if src := c.Doc.OriginOf(value).Node; src != nil && expr.HasDynamic(src.Value) {
 		return false
 	}
 	v := strings.TrimSpace(value.Value)
@@ -52,7 +56,7 @@ func checkHardcodedSecrets(c *lint.PipelineContext) {
 	p := c.Pipeline
 	check := func(vs []*model.Variable) {
 		for _, v := range vs {
-			if looksSecret(v.Name, v.Value) {
+			if looksSecret(c, v.Name, v.Value) {
 				c.Report("ADO403", v.Value, fmt.Sprintf("variable %q looks like a secret but has a literal value in YAML; use a secret variable, a variable group or Azure Key Vault instead", v.Name))
 			}
 		}
@@ -64,7 +68,7 @@ func checkHardcodedSecrets(c *lint.PipelineContext) {
 			check(j.Variables)
 			for _, st := range j.Steps {
 				yamlx.Pairs(st.Env, func(k, v *yaml.Node) {
-					if looksSecret(k.Value, v) {
+					if looksSecret(c, k.Value, v) {
 						c.Report("ADO403", v, fmt.Sprintf("environment variable %q looks like a secret but has a literal value; map a secret variable instead, e.g. %s: $(%s)", k.Value, k.Value, k.Value))
 					}
 				})
@@ -90,30 +94,57 @@ var RetiredImages = map[string]string{
 	"macos-12":         "has been retired; use macOS-15 or macOS-latest",
 	"macos-13":         "was retired on December 4, 2025; use macOS-15 or macOS-latest",
 	"ubuntu-22.04":     "is deprecated and scheduled for removal on April 17, 2027; use ubuntu-24.04 or ubuntu-latest",
-	"macos-14":         "is deprecated (deprecation started July 6, 2026); use macOS-15 or macOS-latest",
+	"macos-14":         "is deprecated and scheduled for removal on November 23, 2026; use macOS-15 or macOS-latest",
+}
+
+// imageKey normalizes a vmImage label for lookup; older labels used spaces ("Ubuntu 18.04").
+func imageKey(img string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(img)), " ", "-")
 }
 
 func checkRetiredImages(c *lint.PipelineContext) {
 	p := c.Pipeline
 	seen := map[*yaml.Node]bool{}
-	check := func(pool *model.Pool) {
-		if pool == nil || pool.VMImageNode == nil || seen[pool.VMImageNode] {
+	report := func(n *yaml.Node, img string) {
+		if seen[n] {
 			return
 		}
-		seen[pool.VMImageNode] = true
-		if why, ok := RetiredImages[strings.ToLower(strings.TrimSpace(pool.VMImage))]; ok {
-			c.Report("ADO404", pool.VMImageNode, fmt.Sprintf("vmImage %q %s", pool.VMImage, why))
+		seen[n] = true
+		if why, ok := RetiredImages[imageKey(img)]; ok {
+			c.Report("ADO404", n, fmt.Sprintf("vmImage %q %s", img, why))
 		}
 	}
-	check(p.Pool)
+	check := func(pool *model.Pool, j *model.Job) {
+		if pool == nil || pool.VMImageNode == nil {
+			return
+		}
+		if sp, ok := expr.Whole(pool.VMImage, expr.SpanMacro); ok && j != nil {
+			for _, v := range matrixValues(j, sp.Expr) {
+				report(v, v.Value)
+			}
+			return
+		}
+		report(pool.VMImageNode, pool.VMImage)
+	}
+	check(p.Pool, nil)
 	for _, s := range p.Stages {
-		check(s.Pool)
+		check(s.Pool, nil)
 		for _, j := range s.Jobs {
-			check(j.Pool)
+			check(j.EffectivePool(), j)
 		}
 	}
 }
 
+// matrixValues returns the values a job's matrix assigns to a variable.
+func matrixValues(j *model.Job, name string) []*yaml.Node {
+	var out []*yaml.Node
+	yamlx.Pairs(yamlx.Value(yamlx.Value(j.Node, "strategy"), "matrix"), func(_, leg *yaml.Node) {
+		if _, v := yamlx.GetFold(leg, name); yamlx.IsScalar(v) {
+			out = append(out, v)
+		}
+	})
+	return out
+}
 func checkContinueOnError(c *lint.PipelineContext) {
 	report := func(unit *yaml.Node, what string) {
 		if k, v := yamlx.Get(unit, "continueOnError"); k != nil && yamlx.IsScalar(v) && strings.EqualFold(strings.TrimSpace(v.Value), "true") {

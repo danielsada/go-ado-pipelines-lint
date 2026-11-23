@@ -150,9 +150,9 @@ func checkDependencies(c *lint.PipelineContext, cycles bool) {
 		for _, j := range s.Jobs {
 			jobs.add(j.Name, j.DependsOn)
 		}
-		reportGraph(c, jobs, "job", c.Doc.Open(s.JobsNode), cycles)
+		reportGraph(c, jobs, "job", p.Partial || c.Doc.Open(s.JobsNode), cycles)
 	}
-	reportGraph(c, stages, "stage", p.StagesNode != nil && c.Doc.Open(p.StagesNode), cycles)
+	reportGraph(c, stages, "stage", p.Partial || (p.StagesNode != nil && c.Doc.Open(p.StagesNode)), cycles)
 }
 
 func reportGraph(c *lint.PipelineContext, g *depGraph, kind string, open, cycles bool) {

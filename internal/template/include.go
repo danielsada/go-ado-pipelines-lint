@@ -88,10 +88,14 @@ func (e *expander) resolveRef(tv *yaml.Node, f *frame) (*yamlx.Source, *frame, b
 	}
 	path, alias := SplitRef(ref)
 	if alias != "" && !strings.EqualFold(alias, "self") {
+		if e.remote[strings.ToLower(ref)] {
+			return nil, nil, false
+		}
+		e.remote[strings.ToLower(ref)] = true
 		e.emit(RuleUnresolved, diag.Info, e.at(tv, f), fmt.Sprintf("template %q is in repository %q; only local templates are expanded, so its contents are not linted", path, alias))
 		return nil, nil, false
 	}
-	abs := e.absPath(path, f)
+	abs := e.locate(path, alias, f)
 	if !e.checkLimits(abs, tv, f) {
 		return nil, nil, false
 	}
@@ -110,6 +114,25 @@ func (e *expander) resolveRef(tv *yaml.Node, f *frame) (*yamlx.Source, *frame, b
 	}
 	stack := append(append([]string(nil), f.stack...), abs)
 	return src, &frame{src: src, ctx: expr.NewContext(), depth: f.depth + 1, stack: stack, cond: f.cond}, true
+}
+
+// locate resolves a template path. Paths are relative to the including file (or to the repository
+// root if they start with /). A path@self reference that doesn't exist relative to the file is retried
+// from the repository root: @self paths inside parameters handed to another repository's template are
+// evaluated there, relative to the root of this repository.
+func (e *expander) locate(path, alias string, f *frame) string {
+	abs := e.absPath(path, f)
+	if !strings.EqualFold(alias, "self") || e.opts.RepoRoot == "" {
+		return abs
+	}
+	if _, err := e.opts.Loader.Load(abs); err == nil || !errors.Is(err, fs.ErrNotExist) {
+		return abs
+	}
+	rooted := filepath.Join(e.opts.RepoRoot, filepath.FromSlash(path))
+	if _, err := e.opts.Loader.Load(rooted); err == nil {
+		return rooted
+	}
+	return abs
 }
 
 func (e *expander) absPath(path string, f *frame) string {
@@ -210,18 +233,26 @@ func (e *expander) varsToList(m *yaml.Node, f *frame) *yaml.Node {
 }
 
 // bind validates passed parameters against the template's declarations and returns the parameters object.
+// Templates that declare parameters in the legacy map form (or not at all) accept any parameter.
 func (e *expander) bind(tpl *yamlx.Source, passed, ref *yaml.Node, f, tf *frame) expr.Value {
 	decl := DeclaredParams(tpl.Root)
-	yamlx.Pairs(passed, func(k, _ *yaml.Node) {
-		if !expr.HasTemplate(k.Value) && FindParam(decl, k.Value) == nil {
-			e.emit(RuleUnexpectedParam, diag.Error, e.at(k, f), fmt.Sprintf("template %q does not declare parameter %q", tpl.Path, k.Value))
+	strict := StrictParams(decl)
+	var extra []expr.KV
+	yamlx.Pairs(passed, func(k, v *yaml.Node) {
+		if expr.HasTemplate(k.Value) || FindParam(decl, k.Value) != nil {
+			return
 		}
+		if strict {
+			e.emit(RuleUnexpectedParam, diag.Error, e.at(k, f), fmt.Sprintf("template %q does not declare parameter %q", tpl.Path, k.Value))
+			return
+		}
+		extra = append(extra, expr.KV{Key: k.Value, Val: expr.FromNode(v)})
 	})
 	var kvs []expr.KV
 	for _, p := range decl {
 		kvs = append(kvs, expr.KV{Key: p.Name, Val: e.bindOne(tpl, p, passed, ref, f, tf)})
 	}
-	return paramsObject(kvs)
+	return paramsObject(append(kvs, extra...))
 }
 
 func (e *expander) bindOne(tpl *yamlx.Source, p *Param, passed, ref *yaml.Node, f, tf *frame) expr.Value {

@@ -4,6 +4,10 @@ steps:
   inputs:
     targetType: inline
     scrpt: echo  # want: ADO502
+- task: Bash@3
+  inputs:
+    targetType: sometimes  # want: ADO502
+    script: echo
 - task: AzureCLI@2
   inputs:
     ConnectedServiceNameARM: conn

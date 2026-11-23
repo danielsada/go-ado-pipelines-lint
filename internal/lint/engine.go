@@ -103,7 +103,7 @@ func (e *Engine) Load(inputs []Input) (entries []*Entry, sources []*yamlx.Source
 		if referenced[src.Abs] {
 			continue
 		}
-		entries = append(entries, &Entry{Src: src, IsTemplate: LooksLikeTemplate(src.Root)})
+		entries = append(entries, &Entry{Src: src, IsTemplate: LooksLikeTemplate(src)})
 	}
 	return entries, sources, nil
 }
@@ -117,6 +117,7 @@ func (e *Engine) Expand(en *Entry) {
 		en.Result = template.ExpandPipeline(en.Src, opts)
 	}
 	en.Model = model.Build(en.Result.Doc, en.IsTemplate)
+	en.Model.Partial = en.IsTemplate
 }
 
 // Validator returns the schema validator.
@@ -143,9 +144,11 @@ func (e *Engine) Lint(ctx context.Context, inputs []Input) ([]diag.Diagnostic, e
 	for _, en := range entries {
 		e.Expand(en)
 		diags = append(diags, en.Result.Diags...)
-		e.checkPipeline(&PipelineContext{Pipeline: en.Model, Doc: en.Result.Doc, Schema: e.validator, rep: rep})
-		if e.scriptsEnabled() {
-			extractor.Add(en.Model)
+		for _, m := range append([]*model.Pipeline{en.Model}, ExtendsParameterPipelines(en)...) {
+			e.checkPipeline(&PipelineContext{Pipeline: m, Doc: m.Doc, Schema: e.validator, rep: rep})
+			if e.scriptsEnabled() {
+				extractor.Add(m)
+			}
 		}
 		for i, s := range en.Result.Doc.Sources {
 			if i > 0 || en.IsTemplate {
@@ -164,13 +167,13 @@ func (e *Engine) Lint(ctx context.Context, inputs []Input) ([]diag.Diagnostic, e
 	for _, s := range all {
 		diags = append(diags, s.ParseDiags...)
 		if s.Root != nil {
-			e.checkSource(&SourceContext{Src: s, IsTemplate: templates[s] || !entrySet[s] && LooksLikeTemplate(s.Root),
+			e.checkSource(&SourceContext{Src: s, IsTemplate: templates[s] || !entrySet[s] && LooksLikeTemplate(s),
 				IsEntry: entrySet[s], Params: template.DeclaredParams(s.Root), rep: rep})
 		}
 	}
 	var toolErr error
-	if e.scriptsEnabled() && len(extractor.Scripts) > 0 {
-		sd, err := scripts.Lint(ctx, e.opts.Runner, extractor.Scripts, scripts.LintOptions{
+	if found := extractor.Scripts(); e.scriptsEnabled() && len(found) > 0 {
+		sd, err := scripts.Lint(ctx, e.opts.Runner, found, scripts.LintOptions{
 			ShellCheck: e.opts.Config.Scripts.ShellCheck, PSScriptAnalyzer: e.opts.Config.Scripts.PSScriptAnalyzer,
 			Require: e.opts.RequireScriptLinters})
 		diags = append(diags, sd...)
@@ -187,6 +190,7 @@ func (e *Engine) scriptsEnabled() bool {
 
 func (e *Engine) checkPipeline(c *PipelineContext) {
 	e.validator.Open = c.Doc.Open
+	e.validator.Conditional = c.Doc.Conditional
 	e.checkSchema(c)
 	for _, r := range e.opts.Registry.All() {
 		if pr, ok := r.(PipelineRule); ok && e.Enabled(r.Meta().ID) {
@@ -222,6 +226,11 @@ func SchemaDef(p *model.Pipeline) string {
 	}
 	for _, k := range []string{"stages", "jobs", "steps", "variables"} {
 		if yamlx.Has(p.Root, k) {
+			if k == "stages" {
+				// Stage templates are often extends templates, which may also define variables,
+				// resources and triggers.
+				return "extendsTemplate"
+			}
 			return k + "Template"
 		}
 	}
@@ -296,7 +305,9 @@ func (e *Engine) ignored(abs string) bool {
 	return e.opts.Config.Ignored(rel)
 }
 
-// templateRefs returns the absolute paths of local templates statically referenced by src.
+// templateRefs returns the absolute paths of local YAML files that src may reference as templates:
+// template: values, and any other scalar naming a .yml/.yaml file (templates are often passed
+// around as parameters, e.g. jobTemplate: /eng/pipelines/build-job.yml).
 func (e *Engine) templateRefs(src *yamlx.Source) []string {
 	var out []string
 	var walk func(n *yaml.Node)
@@ -305,18 +316,32 @@ func (e *Engine) templateRefs(src *yamlx.Source) []string {
 		if n == nil {
 			return
 		}
-		if n.Kind == yaml.MappingNode {
-			if v := yamlx.Value(n, "template"); yamlx.IsScalar(v) && !expr.HasDynamic(v.Value) {
-				if p, alias := template.SplitRef(strings.TrimSpace(v.Value)); alias == "" || strings.EqualFold(alias, "self") {
-					out = append(out, e.resolve(src, p))
-				}
-			}
+		if n.Kind == yaml.ScalarNode {
+			out = append(out, e.refCandidates(src, n.Value)...)
+			return
 		}
 		for _, c := range n.Content {
 			walk(c)
 		}
 	}
 	walk(src.Root)
+	return out
+}
+
+func (e *Engine) refCandidates(src *yamlx.Source, v string) []string {
+	v = strings.TrimSpace(v)
+	p, alias := template.SplitRef(v)
+	lp := strings.ToLower(p)
+	if expr.HasDynamic(v) || strings.ContainsAny(p, " \n") || (!strings.HasSuffix(lp, ".yml") && !strings.HasSuffix(lp, ".yaml")) {
+		return nil
+	}
+	if alias != "" && !strings.EqualFold(alias, "self") {
+		return nil
+	}
+	out := []string{e.resolve(src, p)}
+	if e.opts.RepoRoot != "" {
+		out = append(out, filepath.Join(e.opts.RepoRoot, filepath.FromSlash(p)))
+	}
 	return out
 }
 
@@ -331,10 +356,11 @@ func (e *Engine) resolve(src *yamlx.Source, p string) string {
 var pipelineOnlyKeys = []string{"trigger", "pr", "schedules", "resources", "pool", "name", "extends",
 	"lockBehavior", "appendCommitMessageToRunName"}
 
-// LooksLikeTemplate reports whether a file's root looks like a template rather than a pipeline:
-// it only has parameters plus one of stages/jobs/steps/variables, declares parameters
-// (or is a variables-only file), and has no pipeline-only keys such as trigger or pool.
-func LooksLikeTemplate(root *yaml.Node) bool {
+// LooksLikeTemplate reports whether a file looks like a template rather than a pipeline. It must have
+// one of stages/jobs/steps (or only variables) and no pipeline-only keys such as trigger or pool, and
+// additionally declare parameters, use parameters, or live under a directory named like "templates".
+func LooksLikeTemplate(src *yamlx.Source) bool {
+	root := src.Root
 	if !yamlx.IsMap(root) {
 		return false
 	}
@@ -343,13 +369,75 @@ func LooksLikeTemplate(root *yaml.Node) bool {
 			return false
 		}
 	}
-	hasParams := yamlx.Has(root, "parameters")
 	body := 0
 	for _, k := range []string{"stages", "jobs", "steps"} {
 		if yamlx.Has(root, k) {
 			body++
 		}
 	}
-	varsOnly := body == 0 && yamlx.Has(root, "variables")
-	return (hasParams && body == 1) || varsOnly
+	if body == 0 {
+		return yamlx.Has(root, "variables")
+	}
+	return body == 1 && (yamlx.Has(root, "parameters") || usesParameters(src) || inTemplateDir(src))
+}
+
+func usesParameters(src *yamlx.Source) bool {
+	text := string(src.Data)
+	return strings.Contains(text, "parameters.") || strings.Contains(text, "parameters[") || strings.Contains(text, "in parameters")
+}
+
+func inTemplateDir(src *yamlx.Source) bool {
+	for _, part := range strings.Split(filepath.ToSlash(filepath.Dir(src.Path)), "/") {
+		if strings.Contains(strings.ToLower(part), "template") {
+			return true
+		}
+	}
+	return false
+}
+
+// ExtendsParameterPipelines returns virtual pipelines for stages, jobs or steps that an entry passes as
+// parameters to an extends template that could not be expanded (for example a template in another
+// repository such as the 1ES or OneBranch templates). They are linted like a template body, with an
+// unknown default pool unless a pool parameter is given.
+func ExtendsParameterPipelines(en *Entry) []*model.Pipeline {
+	doc := en.Result.Doc
+	_, ev := yamlx.Get(doc.Root, "extends")
+	params := yamlx.Value(ev, "parameters")
+	var out []*model.Pipeline
+	yamlx.Pairs(params, func(k, v *yaml.Node) {
+		kind := bodyKind(v)
+		if kind == "" {
+			return
+		}
+		root := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Line: k.Line, Column: k.Column,
+			Content: []*yaml.Node{yamlx.Scalar(kind, k), v}}
+		vdoc := doc.WithRoot(root)
+		vdoc.SetOrigin(root, doc.Main, k)
+		vdoc.SetOrigin(root.Content[0], doc.Main, k)
+		m := model.Build(vdoc, true)
+		m.Pool = model.PoolOf(yamlx.Value(params, "pool"))
+		m.PoolUnknown = true
+		// The remote template may add stages or jobs (such as SDL stages) these can depend on.
+		m.Partial = true
+		out = append(out, m)
+	})
+	return out
+}
+
+// bodyKind classifies a parameter value as a list of stages, jobs or steps.
+func bodyKind(v *yaml.Node) string {
+	for _, it := range yamlx.Items(v) {
+		switch {
+		case yamlx.Has(it, "stage"):
+			return "stages"
+		case yamlx.Has(it, "job"), yamlx.Has(it, "deployment"):
+			return "jobs"
+		}
+		for _, k := range model.StepKinds {
+			if k != "template" && yamlx.Has(it, k) {
+				return "steps"
+			}
+		}
+	}
+	return ""
 }

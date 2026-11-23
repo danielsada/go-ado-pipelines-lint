@@ -62,7 +62,8 @@ func Scan(s string) ([]Span, []ScanError) {
 				continue
 			}
 			spans = append(spans, Span{Kind: SpanRuntime, Start: i, End: end + 1, Expr: s[i+2 : end], ExprStart: i + 2})
-			i = end
+			// Keep scanning inside: ${{ }} may be nested in $[ ] and is expanded first.
+			i++
 		case s[i+1] == '(':
 			if m := macroRe.FindStringSubmatch(s[i:]); m != nil {
 				spans = append(spans, Span{Kind: SpanMacro, Start: i, End: i + len(m[0]), Expr: m[1], ExprStart: i + 2})
@@ -120,10 +121,15 @@ func HasDynamic(s string) bool {
 // Whole returns the single span covering all of s (ignoring surrounding whitespace).
 func Whole(s string, kind SpanKind) (Span, bool) {
 	spans, errs := Scan(s)
-	if len(errs) > 0 || len(spans) != 1 || spans[0].Kind != kind {
+	if len(errs) > 0 || len(spans) == 0 || spans[0].Kind != kind {
 		return Span{}, false
 	}
 	sp := spans[0]
+	for _, other := range spans[1:] {
+		if other.Start >= sp.End {
+			return Span{}, false
+		}
+	}
 	if strings.TrimSpace(s[:sp.Start]) != "" || strings.TrimSpace(s[sp.End:]) != "" {
 		return Span{}, false
 	}

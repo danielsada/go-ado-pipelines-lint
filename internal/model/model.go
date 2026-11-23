@@ -22,6 +22,12 @@ type Pipeline struct {
 	StagesNode *yaml.Node
 	Pool       *Pool
 	Variables  []*Variable
+	// PoolUnknown is true when jobs without a pool may run on an unknown pool (for example steps
+	// handed to a template in another repository), rather than the default ubuntu-latest.
+	PoolUnknown bool
+	// Partial is true when the document is a template linted on its own: the stages or jobs it
+	// depends on may be defined by the pipelines that include it.
+	Partial bool
 }
 
 // Ref is a reference by name to another stage or job.
@@ -99,7 +105,12 @@ type Pool struct {
 	Name        string
 	VMImage     string
 	VMImageNode *yaml.Node
+	// OS is the pool's declared operating system (the 1ES/Managed DevOps Pools "os" key), if any.
+	OS string
 }
+
+// PoolOf builds a pool from a pool node (string or mapping), or nil.
+func PoolOf(n *yaml.Node) *Pool { return buildPool(n) }
 
 // StepKinds lists the step keywords, in the order used to classify a step.
 var StepKinds = []string{"task", "script", "bash", "pwsh", "powershell", "checkout", "download",
@@ -292,9 +303,12 @@ func buildPool(n *yaml.Node) *Pool {
 		return p
 	}
 	p.Name = yamlx.Str(n, "name")
-	_, p.VMImageNode = yamlx.Get(n, "vmImage")
+	_, p.VMImageNode = yamlx.GetFold(n, "vmImage")
 	if yamlx.IsScalar(p.VMImageNode) {
 		p.VMImage = p.VMImageNode.Value
+	}
+	if _, osNode := yamlx.GetFold(n, "os"); yamlx.IsScalar(osNode) {
+		p.OS = osNode.Value
 	}
 	return p
 }

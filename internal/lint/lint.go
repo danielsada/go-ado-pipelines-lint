@@ -13,6 +13,9 @@ import (
 	"github.com/danielsada/go-ado-pipelines-lint/internal/yamlx"
 )
 
+// DocsBaseURL is where the generated rule documentation is published (GitHub Pages).
+const DocsBaseURL = "https://danielsada.github.io/go-ado-pipelines-lint/"
+
 // Meta describes a rule.
 type Meta struct {
 	ID       string
@@ -24,7 +27,37 @@ type Meta struct {
 	Description       string
 	Bad               string
 	Good              string
-	HelpURI           string
+	// HelpURI links to the upstream (Azure Pipelines, ShellCheck, ...) documentation the rule is based on.
+	HelpURI string
+}
+
+// DocsURL returns the URL of the rule's documentation page.
+func (m *Meta) DocsURL() string { return DocsBaseURL + "rules/" + m.ID + "/" }
+
+// Category returns the rule's group, derived from its ID.
+func (m *Meta) Category() string {
+	if len(m.ID) < 4 {
+		return "Other"
+	}
+	switch m.ID[3] {
+	case '0':
+		return "Syntax and schema"
+	case '1':
+		return "Structure and identity"
+	case '2':
+		return "Templates and parameters"
+	case '3':
+		return "Expressions"
+	case '4':
+		return "Best practices"
+	case '5':
+		return "Tasks"
+	case '6':
+		return "Conditions"
+	case '7':
+		return "Scripts"
+	}
+	return "Other"
 }
 
 // Rule is anything with metadata. Rules without a checker document diagnostics

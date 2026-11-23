@@ -1,0 +1,11 @@
+parameters:
+- name: Matrix
+  type: string
+  default: '{}'
+trigger: none
+jobs:
+- job: J
+  strategy:
+    matrix: $[ ${{ parameters.Matrix }} ]
+  steps:
+  - script: echo

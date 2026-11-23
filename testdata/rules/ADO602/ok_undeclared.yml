@@ -1,0 +1,5 @@
+trigger: none
+steps:
+- template: legacy/t.yml
+  parameters:
+    flavor: x

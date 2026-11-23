@@ -114,7 +114,7 @@ func SARIF(w io.Writer, ds []diag.Diagnostic, reg *lint.Registry, opts Options) 
 	for _, r := range reg.All() {
 		m := r.Meta()
 		index[m.ID] = len(driver.Rules)
-		driver.Rules = append(driver.Rules, ruleOf(m.ID, m.Name, m.Summary, m.Description, m.HelpURI, m.Severity))
+		driver.Rules = append(driver.Rules, ruleOf(m.ID, m.Name, m.Summary, m.Description, m.DocsURL(), m.Severity))
 	}
 	results := []sarifResult{}
 	for _, d := range ds {

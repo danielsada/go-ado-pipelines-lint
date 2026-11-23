@@ -2,6 +2,7 @@ package schema
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -42,9 +43,38 @@ func (v *Validator) TaskVersions(name string) []string {
 			out = append(out, ref[len(prefix):])
 		}
 	}
+	for _, ref := range v.taskNames() {
+		if strings.HasPrefix(strings.ToLower(ref), prefix) {
+			out = append(out, ref[len(prefix):])
+		}
+	}
 	sort.Strings(out)
 	return uniq(out)
 }
+
+// taskNames returns the task references listed in the schema's task-name enum. A few tasks
+// (e.g. UseNode@1) appear only there, without an input definition.
+func (v *Validator) taskNames() []string {
+	var out []string
+	if ts := v.taskDef.Properties["task"]; ts != nil {
+		for _, b := range ts.AnyOf {
+			out = append(out, b.Enum...)
+		}
+	}
+	return out
+}
+
+// knownTaskName reports whether ref is in the schema's task-name enum.
+func (v *Validator) knownTaskName(ref string) bool {
+	for _, n := range v.taskNames() {
+		if strings.EqualFold(n, ref) {
+			return true
+		}
+	}
+	return false
+}
+
+var taskGUIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}@`)
 
 func (v *Validator) validateTask(n *yaml.Node) []Error {
 	if n.Kind != yaml.MappingNode {
@@ -59,6 +89,9 @@ func (v *Validator) validateTask(n *yaml.Node) []Error {
 		}
 		p := td.Properties[k.Value]
 		if p == nil {
+			p = v.r.Def("taskBase").Properties[k.Value] // e.g. target, which the task definition omits
+		}
+		if p == nil {
 			errs = append(errs, Error{Kind: UnknownProperty, Node: k, Message: unknownMsg("property", k.Value, td, " for a task step")})
 			continue
 		}
@@ -71,10 +104,13 @@ func (v *Validator) validateTask(n *yaml.Node) []Error {
 		return errs
 	}
 	ref := strings.TrimSpace(taskNode.Value)
-	if ref == "" || expr.HasDynamic(ref) || !strings.Contains(ref, "@") {
+	if ref == "" || expr.HasDynamic(ref) || !strings.Contains(ref, "@") || taskGUIDRe.MatchString(ref) {
 		return errs
 	}
 	branch := v.FindTask(ref)
+	if branch == nil && v.knownTaskName(ref) {
+		return errs
+	}
 	if branch == nil {
 		return append(errs, Error{Kind: UnknownTask, Node: taskNode, Message: v.unknownTaskMsg(ref)})
 	}
@@ -118,7 +154,7 @@ func (v *Validator) validateInputs(step, taskNode *yaml.Node, s *Schema, ref str
 		}
 		present[name] = true
 		if val.Kind == yaml.ScalarNode {
-			errs = append(errs, inputValue(val, p, name)...)
+			errs = append(errs, inputValue(val, p, name, ref)...)
 		}
 	})
 	if in != nil && v.Open(in) {
@@ -136,15 +172,15 @@ func (v *Validator) validateInputs(step, taskNode *yaml.Node, s *Schema, ref str
 	return errs
 }
 
-func inputValue(val *yaml.Node, p *Schema, name string) []Error {
+func inputValue(val *yaml.Node, p *Schema, name, ref string) []Error {
 	if isDynamicScalar(val) || yamlx.IsNull(val) {
 		return nil
 	}
 	if p.Type == "boolean" && !boolRe.MatchString(val.Value) {
-		return []Error{{Kind: InvalidValue, Node: val, Message: fmt.Sprintf("input %q expects a boolean (true or false), found %q", name, val.Value)}}
+		return []Error{{Kind: InvalidInput, Node: val, Message: fmt.Sprintf("input %q of task %s expects a boolean (true or false), found %q", name, ref, val.Value)}}
 	}
 	if len(p.Enum) > 0 && !inEnum(val.Value, p.Enum, p.IgnoreCase == "value" || p.IgnoreCase == "all") {
-		return []Error{{Kind: InvalidValue, Node: val, Message: fmt.Sprintf("invalid value %q for input %q; expected one of: %s", val.Value, name, strings.Join(p.Enum, ", "))}}
+		return []Error{{Kind: InvalidInput, Node: val, Message: fmt.Sprintf("value %q for input %q of task %s is not in the schema's list (%s); the schema may be older than the task", val.Value, name, ref, strings.Join(p.Enum, ", "))}}
 	}
 	return nil
 }

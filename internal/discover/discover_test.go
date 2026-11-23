@@ -9,16 +9,26 @@ import (
 
 func TestFind(t *testing.T) {
 	dir := t.TempDir()
-	for _, f := range []string{
-		"azure-pipelines.yml", "azure-pipelines-release.yaml", "docker-compose.yml",
-		".azure-pipelines/ci.yml", ".azuredevops/templates/steps.yaml", "svc/azure-pipelines.yml",
-		"node_modules/pkg/azure-pipelines.yml", "k8s/deploy.yml",
-	} {
+	pipeline := "trigger: none\nsteps:\n- script: echo\n"
+	files := map[string]string{
+		"azure-pipelines.yml":                  pipeline,
+		"azure-pipelines-release.yaml":         "",
+		"eng/pipelines/ci.yml":                 "extends:\n  template: v1/t.yml@tpl\n",
+		".ado/templates/steps.yaml":            "parameters:\n  a: b\nsteps:\n- ${{ if true }}:\n  - bash: echo\n",
+		"build/jobs.yml":                       "jobs:\n- job: A\n",
+		".azuredevops/dependabot.yml":          "version: 2\nupdates: []\n",
+		".github/workflows/ci.yml":             "on: push\njobs:\n  build:\n    steps:\n    - run: echo\n",
+		".gitlab-ci.yml":                       "stages: [build, test]\n",
+		"node_modules/pkg/azure-pipelines.yml": pipeline,
+		"k8s/deploy.yml":                       "apiVersion: v1\nkind: Pod\n",
+		"broken.yml":                           "a: b: c\n",
+	}
+	for f, content := range files {
 		p := filepath.Join(dir, filepath.FromSlash(f))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(p, nil, 0o644); err != nil {
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -31,7 +41,7 @@ func TestFind(t *testing.T) {
 		r, _ := filepath.Rel(dir, g)
 		rels = append(rels, filepath.ToSlash(r))
 	}
-	want := ".azure-pipelines/ci.yml .azuredevops/templates/steps.yaml azure-pipelines-release.yaml azure-pipelines.yml svc/azure-pipelines.yml"
+	want := ".ado/templates/steps.yaml azure-pipelines-release.yaml azure-pipelines.yml build/jobs.yml eng/pipelines/ci.yml"
 	if strings.Join(rels, " ") != want {
 		t.Errorf("Find = %v", rels)
 	}

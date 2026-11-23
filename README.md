@@ -2,6 +2,8 @@
 
 `adolint` is a CLI that parses and lints Azure DevOps (Azure Pipelines) YAML.
 
+**Documentation, with a page for every rule: <https://danielsada.github.io/go-ado-pipelines-lint/>**
+
 It does more than a schema check. adolint expands local templates and compile-time `${{ }}` expressions, validates the result against the [official Azure Pipelines schema](https://github.com/microsoft/azure-pipelines-vscode), and runs lint rules. The rules cover structure, dependencies, parameters, expressions, conditions and best practices. Inline bash and PowerShell scripts are linted with [ShellCheck](https://www.shellcheck.net) and [PSScriptAnalyzer](https://learn.microsoft.com/powershell/utility-modules/psscriptanalyzer/overview), and every finding points back to the original line and column in your YAML, including inside templates.
 
 ```console
@@ -41,7 +43,7 @@ adolint explain ADO603                # describe a rule, with examples
 adolint version
 ```
 
-Without arguments, `lint` searches the working directory for `azure-pipelines*.yml` and `azure-pipelines*.yaml` files at any depth. It also picks up every YAML file under `.azure-pipelines/`, `.azuredevops/`, `.pipelines/` or `azure-pipelines/`. A file that another linted file references as a template is linted as part of that pipeline, not on its own. A file that looks like a template (only `parameters` plus one of `stages`, `jobs`, `steps` or `variables`, and no pipeline-only keys such as `trigger` or `pool`) is validated as a template.
+Without arguments, `lint` searches the working directory for `azure-pipelines*.yml` and `azure-pipelines*.yaml` files. It also picks up any other YAML file that looks like a pipeline or template: one with `extends`, or with `stages`/`jobs`/`steps` lists of stages, jobs or steps. A file that another file references (via `template:`, or any value naming it) is linted as part of that pipeline, not on its own. A file that looks like a template is validated as a template. That means it has one of `stages`, `jobs` or `steps` (or only `variables`), no pipeline-only keys such as `trigger` or `pool`, and it either declares or uses `parameters`, or sits under a directory whose name contains `template`.
 
 ### `lint` flags
 
@@ -82,7 +84,9 @@ Exit codes: `0` means no findings at or above `--fail-on`, `1` means findings, `
    - It evaluates `${{ }}` expressions and `if`/`elseif`/`else`/`each`/`insert` directives.
    - Local paths are resolved relative to the including file, or to the repository root for paths starting with `/`.
    - It applies the documented limits of 100 files and 100 nesting levels, and detects include cycles.
-   - Templates from other repositories (`path@alias`) are skipped with an info diagnostic (ADO202).
+   - Templates from other repositories (`path@alias`) are skipped with an info diagnostic (ADO202). Stages, jobs and steps passed as parameters to such an `extends` template are still linted.
+   - `path@self` references are resolved relative to the including file, then from the repository root.
+   - Templates that declare parameters in the legacy mapping form, or not at all, accept any parameter.
 3. **Unknown values stay unknown**:
    - Pipeline parameters of type `string`, `number` and `boolean` can change at queue time, so they are treated as unknown. Other parameters use their defaults.
    - When a condition can't be decided, every branch is expanded and marked conditional, so the whole pipeline is linted without false duplicate-name errors.
@@ -111,11 +115,10 @@ adolint lints these inline scripts after template expansion:
 
 Before a script is linted, Azure Pipelines syntax is replaced with **same-length placeholders** so every column stays put:
 
-- `${{ ... }}` becomes underscores.
-- A `$(Macro.Name)` that contains a dot, or that names a declared variable, becomes underscores.
-- Real command substitutions such as `$(pwd)` are left alone.
+- `${{ ... }}` and `$(Macro.Name)` macros become underscores. In PowerShell expression positions, such as `.AddDays(${{ parameters.days }})`, the placeholder starts with `$` so it parses as a variable.
+- A bare `$(name)` is treated as a macro unless it is a common command such as `$(pwd)` or `$(date)`, because variables also come from variable groups and the pipeline UI. Command substitutions with arguments, like `$(git rev-parse HEAD)`, are left alone.
 
-Findings are reported as `ADO701/SCxxxx` or `ADO702/RuleName` at the exact YAML line and column. Each tool's own severity is kept unless you configure a severity for the rule. Run `adolint extract` to see exactly what is linted.
+Findings are reported as `ADO701/SCxxxx` or `ADO702/RuleName` at the exact YAML line and column. ShellCheck severities are kept. For PSScriptAnalyzer, parse errors are errors, other Error and Warning findings are warnings, and Information findings are info. A severity configured for the rule overrides these. Run `adolint extract` to see exactly what is linted.
 
 The default `recommended` profile is a curated set of CI-relevant checks:
 
@@ -169,7 +172,7 @@ steps:
 
 ## Rules
 
-Run `adolint explain <ID>` for details and examples.
+Each rule has a page with details, examples and configuration at `https://danielsada.github.io/go-ado-pipelines-lint/rules/<ID>/`, and `adolint explain <ID>` shows the same in a terminal.
 
 | ID | Name | Default | Summary |
 | --- | --- | --- | --- |
@@ -203,13 +206,13 @@ Run `adolint explain <ID>` for details and examples.
 | ADO404 | `retired-vm-image` | warning | A Microsoft-hosted image is retired or deprecated. |
 | ADO405 | `continue-on-error` | info | continueOnError: true hides failures. |
 | ADO501 | `unknown-task` | info | The task isn't a known built-in task or version. |
-| ADO502 | `unknown-task-input` | warning | An input isn't defined for this built-in task version. |
+| ADO502 | `invalid-task-input` | warning | A task input isn't defined for this built-in task version, or has a value outside its allowed list. |
 | ADO503 | `missing-task-input` | warning | A required input of a built-in task is missing. |
 | ADO601 | `constant-condition` | warning | A condition is always true or always false. |
 | ADO602 | `constant-template-if` | warning | A ${{ if }} or ${{ elseif }} is always true or always false. |
 | ADO603 | `condition-overrides-succeeded` | warning | A custom condition doesn't check job status. |
 | ADO604 | `always-runs-on-cancel` | info | always() also runs when the run is canceled. |
-| ADO605 | `dependency-not-declared` | error | dependencies.X is used without depending on X. |
+| ADO605 | `dependency-not-declared` | warning | dependencies.X is used without depending on X. |
 | ADO701 | `shellcheck` | per finding | ShellCheck finding in an inline bash script. |
 | ADO702 | `psscriptanalyzer` | per finding | PSScriptAnalyzer finding in an inline PowerShell script. |
 | ADO703 | `script-linter-unavailable` | info | ShellCheck or PSScriptAnalyzer isn't installed, so scripts weren't linted. |

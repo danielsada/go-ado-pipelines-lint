@@ -67,6 +67,12 @@ func FindParam(ps []*Param, name string) *Param {
 	return nil
 }
 
+// StrictParams reports whether parameters are declared in the typed list form. Only then does
+// Azure Pipelines reject parameters that a template doesn't declare.
+func StrictParams(ps []*Param) bool {
+	return len(ps) > 0 && ps[0].Typed
+}
+
 func isScalarType(t string) bool {
 	switch strings.ToLower(t) {
 	case "string", "number", "boolean":

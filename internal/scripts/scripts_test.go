@@ -17,15 +17,19 @@ import (
 )
 
 func TestPlaceholders(t *testing.T) {
-	in := "cd $(Build.SourcesDirectory) && echo $(pwd) ${{ parameters.x }} $(myVar) $(other)"
-	got := Placeholders(in, map[string]bool{"myvar": true})
+	in := "cd $(Build.SourcesDirectory) && echo $(pwd) ${{ parameters.x }} $(myVar) $(other) $(date) $(two words)"
+	got := Placeholders(in, map[string]bool{"myvar": true}, Bash)
 	if len(got) != len(in) {
 		t.Fatalf("length changed: %d -> %d", len(in), len(got))
 	}
 	u := func(s string) string { return strings.Repeat("_", len(s)) }
-	want := "cd " + u("$(Build.SourcesDirectory)") + " && echo $(pwd) " + u("${{ parameters.x }}") + " " + u("$(myVar)") + " $(other)"
+	want := "cd " + u("$(Build.SourcesDirectory)") + " && echo $(pwd) " + u("${{ parameters.x }}") + " " + u("$(myVar)") + " " + u("$(other)") + " $(date) $(two words)"
 	if got != want {
 		t.Errorf("Placeholders:\n got %q\nwant %q", got, want)
+	}
+	ps := Placeholders("(Get-Date).AddDays(${{ parameters.days }}) $(Get-Date) & $(Build.SourcesDirectory)/x.ps1 $${{ p.x }} -eq ${{ p.y }}", nil, PowerShell)
+	if want := "(Get-Date).AddDays($" + u("{{ parameters.days }}") + ") $(Get-Date) & " + u("$(Build.SourcesDirectory)") + "/x.ps1 $" + u("${{ p.x }}") + " -eq $" + u("{{ p.y }}"); ps != want {
+		t.Errorf("PowerShell placeholders:\n got %q\nwant %q", ps, want)
 	}
 }
 
@@ -73,7 +77,47 @@ func extract(t *testing.T, src string, opts Options) []*Script {
 	res := template.ExpandPipeline(s, template.Options{NoTemplates: true})
 	x := NewExtractor(opts)
 	x.Add(model.Build(res.Doc, false))
-	return x.Scripts
+	return x.Scripts()
+}
+
+func TestMixedPoolScriptIsSkipped(t *testing.T) {
+	scripts := extract(t, `trigger: none
+jobs:
+- ${{ each img in split('ubuntu-latest,windows-latest', ',') }}:
+  - job: J_${{ replace(img, '-', '_') }}
+    pool:
+      vmImage: ${{ img }}
+    steps:
+    - script: cd x64
+    - bash: cd y
+`, Options{})
+	if len(scripts) != 1 || scripts[0].Source != "bash step" || scripts[0].ID != 0 {
+		t.Fatalf("got %+v, want only the bash step", scripts)
+	}
+}
+
+func TestFoldedAndWindowsOnly(t *testing.T) {
+	scripts := extract(t, `trigger: none
+steps:
+- script: >
+    docker run --rm
+    --volume $AAA:/a
+    $CCC sleep 1
+- script: cd x64
+  condition: eq(variables['Agent.OS'], 'Windows_NT')
+`, Options{})
+	if len(scripts) != 1 {
+		t.Fatalf("got %d scripts, want only the folded one", len(scripts))
+	}
+	s := scripts[0]
+	off := strings.Index(s.Text, "$AAA")
+	if l, c := s.Map(1, off+1); l != 5 || c != 14 {
+		t.Errorf("folded Map = %d:%d, want 5:14", l, c)
+	}
+	off = strings.Index(s.Text, "$CCC")
+	if l, c := s.Map(1, off+1); l != 6 || c != 5 {
+		t.Errorf("folded Map = %d:%d, want 6:5", l, c)
+	}
 }
 
 func TestExtract(t *testing.T) {

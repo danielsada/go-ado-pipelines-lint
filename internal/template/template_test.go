@@ -248,7 +248,9 @@ stages:
 	}
 }
 
-func TestTypedObjectValues(t *testing.T) {
+// TestUntypedScalarsAreStrings checks that, as in Azure Pipelines, YAML scalars inside object and
+// untyped parameters are strings ("false" is truthy), while typed boolean parameters are booleans.
+func TestUntypedScalarsAreStrings(t *testing.T) {
 	r := expandFS(t, memFS{
 		"azure-pipelines.yml": `
 parameters:
@@ -278,9 +280,45 @@ parameters:
   type: object
   default: { publish: false, retries: 9, label: 'false' }
 steps:
-- script: skip
+- script: publish
+- script: many
 - script: quoted string is truthy
 - script: string param
+`)
+}
+
+func TestLegacyParamsSelfAndData(t *testing.T) {
+	r := expandFS(t, memFS{
+		"pipelines/azure-pipelines.yml": `
+trigger: none
+steps:
+- template: legacy.yml
+  parameters:
+    platform: linux
+    shell: unix
+- template: pipelines/shared.yml@self
+- template: shared.yml@self
+`,
+		"pipelines/legacy.yml": "parameters:\n  platform: none\nsteps:\n- ${{ if eq(parameters.shell, 'unix') }}:\n  - script: echo ${{ parameters.platform }}\n",
+		"pipelines/shared.yml": `
+parameters:
+- name: matrix
+  type: object
+  default: [{name: a, template: cpp-app}]
+steps:
+- ${{ each m in parameters.matrix }}:
+  - script: echo ${{ m.template }} $[ format('{0}', '${{ m.name }}') ]
+`,
+	}, "pipelines/azure-pipelines.yml")
+	if len(r.Diags) > 0 {
+		t.Fatalf("diags: %v", rules(r.Diags))
+	}
+	assertExpanded(t, r, `
+trigger: none
+steps:
+- script: echo linux
+- script: echo cpp-app $[ format('{0}', 'a') ]
+- script: echo cpp-app $[ format('{0}', 'a') ]
 `)
 }
 

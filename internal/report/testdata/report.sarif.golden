@@ -15,7 +15,7 @@
               "shortDescription": {
                 "text": "Unknown dependency."
               },
-              "helpUri": "https://example.com/ado103",
+              "helpUri": "https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO103/",
               "defaultConfiguration": {
                 "level": "error"
               }
@@ -26,6 +26,7 @@
               "shortDescription": {
                 "text": "ShellCheck finding."
               },
+              "helpUri": "https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO701/",
               "defaultConfiguration": {
                 "level": "warning"
               }

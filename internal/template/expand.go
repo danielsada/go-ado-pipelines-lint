@@ -49,6 +49,8 @@ type expander struct {
 	diags      []diag.Diagnostic
 	files      map[string]bool
 	limitShown bool
+	// remote records unresolved references already reported, so each is reported once.
+	remote map[string]bool
 }
 
 type frame struct {
@@ -88,14 +90,27 @@ func ExpandTemplate(src *yamlx.Source, opts Options) *Result {
 }
 
 func expand(src *yamlx.Source, opts Options, pipeline bool) *Result {
-	e := &expander{opts: opts, doc: yamlx.NewDoc(src), files: map[string]bool{}}
+	e := &expander{opts: opts, doc: yamlx.NewDoc(src), files: map[string]bool{}, remote: map[string]bool{}}
 	res := &Result{Doc: e.doc}
 	if src.Root == nil {
 		return res
 	}
 	res.Params = DeclaredParams(src.Root)
 	f := &frame{src: src, ctx: expr.NewContext(), stack: []string{src.Abs}}
-	f.ctx.Set("parameters", e.rootParams(res.Params, f))
+	if !pipeline && !StrictParams(res.Params) {
+		// A template without typed declarations accepts any parameter, so on its own nothing is
+		// known about its parameters (not even which ones exist).
+		f.ctx.Set("parameters", expr.Unknown())
+	} else if !pipeline {
+		// A template linted on its own has no caller: every parameter value is unknown.
+		var kvs []expr.KV
+		for _, p := range res.Params {
+			kvs = append(kvs, expr.KV{Key: p.Name, Val: expr.Unknown()})
+		}
+		f.ctx.Set("parameters", paramsObject(kvs))
+	} else {
+		f.ctx.Set("parameters", e.rootParams(res.Params, f))
+	}
 	root := e.node(src.Root, f, "")
 	if pipeline && yamlx.IsMap(root) {
 		root = e.extends(root, f)
@@ -109,7 +124,10 @@ func (e *expander) rootParams(ps []*Param, f *frame) expr.Value {
 	var kvs []expr.KV
 	for _, p := range ps {
 		v := expr.Unknown()
-		if p.Default != nil && (!p.Typed || !isScalarType(p.Type)) {
+		// Scalar parameters can change at queue time (pipelines) or per caller (templates), and
+		// untyped scalar defaults are often placeholders, so only list and object defaults are used.
+		scalar := (p.Typed && isScalarType(p.Type)) || (!p.Typed && yamlx.IsScalar(p.Default))
+		if p.Default != nil && !scalar {
 			v, _ = typed(p, e.node(p.Default, f, p.Name))
 		}
 		kvs = append(kvs, expr.KV{Key: p.Name, Val: v})
@@ -148,6 +166,9 @@ func (e *expander) clone(n *yaml.Node, f *frame) *yaml.Node {
 		return nil
 	}
 	c := e.newNode(n.Kind, n.Tag, n, f)
+	if e.doc.Conditional(n) {
+		e.doc.MarkConditional(c)
+	}
 	c.Value, c.Anchor = n.Value, ""
 	c.HeadComment, c.LineComment, c.FootComment = n.HeadComment, n.LineComment, n.FootComment
 	for _, ch := range n.Content {
@@ -335,7 +356,7 @@ func (e *expander) mapping(n *yaml.Node, f *frame, key string) *yaml.Node {
 			}
 		case expr.DirEach:
 			ch.reset()
-			e.each(d, err == nil, f, func(lf *frame) { e.mergeBody(out, v, lf, key, &scalarRes) })
+			e.each(d, err == nil, f, out, func(lf *frame) { e.mergeBody(out, v, lf, key, &scalarRes) })
 		case expr.DirInsert:
 			ch.reset()
 			e.insert(out, v, f, key)
@@ -344,6 +365,8 @@ func (e *expander) mapping(n *yaml.Node, f *frame, key string) *yaml.Node {
 			kn := e.clone(k, f)
 			if kv := expr.Eval(d.Expr, f.ctx); err == nil && kv.Known() {
 				kn.Value = kv.String()
+			} else {
+				e.doc.MarkOpen(out)
 			}
 			e.addPair(out, kn, e.node(v, f, kn.Value), f)
 		}
@@ -393,8 +416,9 @@ func (e *expander) insert(out, v *yaml.Node, f *frame, key string) {
 }
 
 // each calls body once per collection item with the loop variable bound. If the
-// collection is unknown, body is called once with an unknown loop variable.
-func (e *expander) each(d *expr.Directive, ok bool, f *frame, body func(*frame)) {
+// collection is unknown, body is called once with an unknown loop variable and open (the
+// collection being built, if any) is marked open.
+func (e *expander) each(d *expr.Directive, ok bool, f *frame, open *yaml.Node, body func(*frame)) {
 	coll := expr.Unknown()
 	if ok {
 		coll = expr.Eval(d.Coll, f.ctx)
@@ -404,15 +428,24 @@ func (e *expander) each(d *expr.Directive, ok bool, f *frame, body func(*frame))
 		if d.Var != "" {
 			body(f.with(d.Var, expr.Unknown()).conditional(true))
 		}
+		if open != nil {
+			e.doc.MarkOpen(open)
+		}
 	case expr.KArray:
 		for _, it := range coll.Arr {
-			body(f.with(d.Var, it))
+			body(f.with(d.Var, it).conditional(e.isConditional(it)))
 		}
 	case expr.KObject:
 		for _, kv := range coll.Obj {
-			body(f.with(d.Var, expr.Value{Kind: expr.KObject, Obj: []expr.KV{{Key: "key", Val: expr.Str(kv.Key)}, {Key: "value", Val: kv.Val}}}))
+			item := expr.Value{Kind: expr.KObject, Obj: []expr.KV{{Key: "key", Val: expr.Str(kv.Key)}, {Key: "value", Val: kv.Val}}}
+			body(f.with(d.Var, item).conditional(e.isConditional(kv.Val)))
 		}
 	}
+}
+
+// isConditional reports whether a value came from an unresolved if/else branch.
+func (e *expander) isConditional(v expr.Value) bool {
+	return v.Node != nil && e.doc.Conditional(v.Node)
 }
 
 func singleDirective(item *yaml.Node) (*expr.Directive, *yaml.Node, error) {
@@ -452,13 +485,13 @@ func (e *expander) seqDirective(out *yaml.Node, d *expr.Directive, ok bool, body
 		if yamlx.IsMap(body) {
 			item := e.newNode(yaml.MappingNode, "!!map", body, f)
 			var scalarRes *yaml.Node
-			e.each(d, ok, f, func(lf *frame) { e.mergeBody(item, body, lf, key, &scalarRes) })
+			e.each(d, ok, f, item, func(lf *frame) { e.mergeBody(item, body, lf, key, &scalarRes) })
 			if len(item.Content) > 0 {
 				out.Content = append(out.Content, item)
 			}
 			return
 		}
-		e.each(d, ok, f, func(lf *frame) { e.appendBody(out, body, lf, key) })
+		e.each(d, ok, f, out, func(lf *frame) { e.appendBody(out, body, lf, key) })
 	default:
 		ch.reset()
 		e.appendBody(out, body, f, key)
@@ -488,7 +521,7 @@ func (e *expander) seqItem(out, item *yaml.Node, f *frame, key string) {
 			return
 		}
 	}
-	if yamlx.IsMap(item) && yamlx.Has(item, "template") {
+	if isTemplateRef(item) {
 		items, ok := e.include(item, f, key)
 		out.Content = append(out.Content, items...)
 		if !ok {
@@ -497,6 +530,20 @@ func (e *expander) seqItem(out, item *yaml.Node, f *frame, key string) {
 		return
 	}
 	out.Content = append(out.Content, e.node(item, f, key))
+}
+
+// isTemplateRef reports whether a sequence item is a template reference: a mapping with a template
+// key and, optionally, parameters. Data objects that merely have a "template" field are not.
+func isTemplateRef(item *yaml.Node) bool {
+	if !yamlx.IsMap(item) || !yamlx.Has(item, "template") {
+		return false
+	}
+	for i := 0; i+1 < len(item.Content); i += 2 {
+		if k := item.Content[i].Value; k != "template" && k != "parameters" {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *expander) seqValue(out *yaml.Node, v expr.Value, item *yaml.Node, f *frame) {

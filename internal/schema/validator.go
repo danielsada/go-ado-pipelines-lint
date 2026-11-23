@@ -24,6 +24,7 @@ const (
 	UnknownTask
 	UnknownInput
 	MissingInput
+	InvalidInput
 )
 
 // Rule IDs for each error kind.
@@ -35,6 +36,7 @@ var kindRule = map[ErrorKind]string{
 	UnknownTask:     "ADO501",
 	UnknownInput:    "ADO502",
 	MissingInput:    "ADO503",
+	InvalidInput:    "ADO502",
 }
 
 // Error is a schema violation at a node.
@@ -51,9 +53,13 @@ func (e Error) RuleID() string { return kindRule[e.Kind] }
 type Validator struct {
 	r *Root
 	// Open reports whether a collection may hold unresolved content; required checks are skipped for it.
-	Open      func(*yaml.Node) bool
-	taskDef   *Schema
-	taskCache map[string]*Schema
+	Open func(*yaml.Node) bool
+	// Conditional reports whether a node came from an unresolved if/else branch. Elements there that
+	// match no known shape are not reported: they are often deliberate error traps such as
+	// - 'Unsupported configuration': error
+	Conditional func(*yaml.Node) bool
+	taskDef     *Schema
+	taskCache   map[string]*Schema
 }
 
 // NewValidator creates a validator for the embedded schema.
@@ -62,7 +68,7 @@ func NewValidator() (*Validator, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Validator{r: r, Open: func(*yaml.Node) bool { return false }, taskDef: r.Def("task"), taskCache: map[string]*Schema{}}, nil
+	return &Validator{r: r, Open: func(*yaml.Node) bool { return false }, Conditional: func(*yaml.Node) bool { return false }, taskDef: r.Def("task"), taskCache: map[string]*Schema{}}, nil
 }
 
 // Root returns the underlying schema.
@@ -303,6 +309,14 @@ func (v *Validator) mapping(n *yaml.Node, s *Schema) []Error {
 		if p.DeprecationMessage != "" {
 			errs = append(errs, Error{Kind: Deprecated, Node: k, Message: p.DeprecationMessage})
 		}
+		if name == "paths" {
+			// The schema reuses the branch-name pattern for path filters, which rejects valid
+			// paths such as /docs/* or sdk/storage/; only check the shape.
+			if !yamlx.IsMap(val) && !yamlx.IsSeq(val) && !yamlx.IsNull(val) && !isTemplateScalar(val) {
+				errs = append(errs, Error{Kind: InvalidValue, Node: val, Message: "paths must be a mapping with include/exclude lists"})
+			}
+			continue
+		}
 		errs = append(errs, v.validate(val, p, name)...)
 	}
 	if v.Open(n) {
@@ -387,11 +401,12 @@ func (v *Validator) anyOf(n *yaml.Node, branches []*Schema, key string) []Error 
 		var keys []string
 		cands, keys = v.discriminate(n, cands)
 		if len(cands) == 0 {
-			if v.Open(n) {
+			if v.Open(n) || v.Conditional(n) {
 				return nil
 			}
 			return []Error{{Kind: MissingRequired, Node: n, Message: "expected a mapping with one of the keys: " + strings.Join(keys, ", ")}}
 		}
+		cands = v.covering(n, cands)
 	}
 	if len(cands) == 1 {
 		return v.validate(n, cands[0], key)
@@ -402,7 +417,7 @@ func (v *Validator) anyOf(n *yaml.Node, branches []*Schema, key string) []Error 
 		if len(errs) == 0 {
 			return nil
 		}
-		if i == 0 || len(errs) < len(best) {
+		if i == 0 || score(errs) < score(best) {
 			best = errs
 		}
 	}
@@ -412,6 +427,60 @@ func (v *Validator) anyOf(n *yaml.Node, branches []*Schema, key string) []Error 
 		}
 	}
 	return best
+}
+
+// score ranks candidate errors when choosing an anyOf branch: structural problems count fully, while
+// findings about task identity or deprecation barely count, so they can't make a wrong shape win.
+func score(errs []Error) float64 {
+	s := 0.0
+	for _, e := range errs {
+		switch e.Kind {
+		case UnknownTask, Deprecated:
+			s += 0.001
+		default:
+			s++
+		}
+	}
+	return s
+}
+
+// covering keeps the object candidates that define every key of n, if any do.
+func (v *Validator) covering(n *yaml.Node, cands []*Schema) []*Schema {
+	if len(cands) < 2 {
+		return cands
+	}
+	var out []*Schema
+	for _, c := range cands {
+		props := v.properties(c)
+		if props == nil {
+			continue
+		}
+		all := true
+		for i := 0; i+1 < len(n.Content) && all; i += 2 {
+			k := n.Content[i].Value
+			if p, _ := findProp(&Schema{Properties: props}, k); p == nil && !expr.HasTemplate(k) {
+				all = false
+			}
+		}
+		if all {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		return cands
+	}
+	return out
+}
+
+// properties returns the properties of s, following references.
+func (v *Validator) properties(s *Schema) map[string]*Schema {
+	for i := 0; s != nil && i < 16; i++ {
+		if s.Properties != nil {
+			return s.Properties
+		}
+		s = v.r.target(s)
+	}
+	return nil
 }
 
 func (v *Validator) alternatives(cands []*Schema) []string {

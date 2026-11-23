@@ -79,7 +79,7 @@ func spanOccurrences(v scalarVisit) []occurrence {
 		out = append(out, occurrence{visit: v, off: se.Pos, err: errors.New(se.Msg)})
 	}
 	for _, sp := range spans {
-		if sp.Kind == expr.SpanMacro || (sp.Kind == expr.SpanRuntime && script) {
+		if sp.Kind == expr.SpanMacro || (sp.Kind == expr.SpanRuntime && (script || expr.HasTemplate(sp.Expr))) {
 			continue
 		}
 		ast, err := expr.Parse(sp.Expr)
@@ -220,6 +220,9 @@ func memberOf(x expr.Node) (string, *expr.Ident, bool) {
 }
 
 func checkUndeclaredParams(c *lint.SourceContext) {
+	if c.IsTemplate && !template.StrictParams(c.Params) {
+		return // legacy or missing declarations: callers may pass any parameter
+	}
 	parameterRefs(collectExpressions(c.Src.Root), func(name string, o occurrence, off int) {
 		if template.FindParam(c.Params, name) == nil {
 			c.ReportAt("ADO206", at(c, o.node(), off), fmt.Sprintf("parameters.%s is not declared in this file's parameters", name))

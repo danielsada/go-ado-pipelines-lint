@@ -79,6 +79,45 @@ steps:
 	}
 }
 
+func TestRemoteExtendsParametersAreLinted(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"azure-pipelines.yml": `trigger: none
+resources:
+  repositories:
+  - repository: tpl
+    type: git
+    name: org/templates
+extends:
+  template: v1/t.yml@tpl
+  parameters:
+    pool:
+      name: Hosted
+      os: windows
+    stages:
+    - stage: s
+      dependsOn: Nope
+      jobs:
+      - job: j
+        pool:
+          vmImage: ubuntu-20.04
+        steps:
+        - task: NoVersion
+        - bash: echo
+          bogusKey: 1
+`,
+	})
+	got := summary(run(t, dir, nil, nil, "azure-pipelines.yml"))
+	if strings.Contains(got, "ADO103") {
+		t.Errorf("stages passed to a remote template may depend on stages it adds: %s", got)
+	}
+	for _, want := range []string{"azure-pipelines.yml:8:ADO202:info",
+		"azure-pipelines.yml:19:ADO404:warning", "azure-pipelines.yml:21:ADO105:error", "azure-pipelines.yml:23:ADO003:error"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in %s", want, got)
+		}
+	}
+}
+
 func TestSeverityPrecedence(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"a.yml": "steps:\n- script: echo\n  continueOnError: true\n"})
 	cfg, err := config.Parse([]byte("rules:\n  ADO401: error\n  ADO405: off\n"), filepath.Join(dir, ".adolint.yaml"), rules.Registry().Has)
@@ -116,8 +155,14 @@ func TestIgnoreAndTemplates(t *testing.T) {
 }
 
 func TestLooksLikeTemplate(t *testing.T) {
-	dir := writeFiles(t, map[string]string{"p.yml": "steps:\n- script: echo\n", "v.yml": "variables:\n  a: b\n"})
-	if got := summary(run(t, dir, nil, nil, "p.yml", "v.yml")); got != "p.yml:1:ADO401:warning" {
+	dir := writeFiles(t, map[string]string{
+		"p.yml": "steps:\n- script: echo\n",
+		"v.yml": "variables:\n  a: b\n",
+		// A steps-only wrapper that forwards whatever parameters it is given.
+		"eng/templates/wrapper.yml": "steps:\n- template: /core.yml\n  parameters:\n    ${{ each parameter in parameters }}:\n      ${{ parameter.key }}: ${{ parameter.value }}\n",
+		"core.yml":                  "parameters:\n- name: required\n  type: string\nsteps:\n- script: echo ${{ parameters.required }}\n",
+	})
+	if got := summary(run(t, dir, nil, nil, "p.yml", "v.yml", "eng/templates/wrapper.yml")); got != "p.yml:1:ADO401:warning" {
 		t.Errorf("got %s", got)
 	}
 }

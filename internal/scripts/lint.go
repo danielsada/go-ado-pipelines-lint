@@ -82,9 +82,11 @@ func shellcheckSeverity(level string) diag.Severity {
 
 func psSeverity(level string) diag.Severity {
 	switch strings.ToLower(level) {
-	case "error", "parseerror":
+	case "parseerror":
 		return diag.Error
-	case "warning":
+	case "error", "warning":
+		// PSScriptAnalyzer's "Error" rules (e.g. ConvertTo-SecureString with plain text) are
+		// security guidance that is routinely intentional in CI, so they are capped at warning.
 		return diag.Warning
 	}
 	return diag.Info

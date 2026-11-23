@@ -37,6 +37,13 @@ func NewDoc(src *Source) *Doc {
 	}
 }
 
+// WithRoot returns a view of the document with a different root that shares its origin data.
+func (d *Doc) WithRoot(root *yaml.Node) *Doc {
+	c := *d
+	c.Root = root
+	return &c
+}
+
 // SetOrigin records that n was produced from orig in src.
 func (d *Doc) SetOrigin(n *yaml.Node, src *Source, orig *yaml.Node) {
 	if o, ok := d.origin[orig]; ok {

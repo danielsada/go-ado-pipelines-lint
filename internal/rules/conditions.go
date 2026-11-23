@@ -123,8 +123,13 @@ func constantCondition(ast expr.Node, params []*template.Param) (value bool, inv
 	var names []string
 	var domains [][]expr.Value
 	combos := 1
+	undeclared := false
 	parameterRefs([]occurrence{{ast: ast}}, func(name string, _ occurrence, _ int) {
 		p := template.FindParam(params, name)
+		if p == nil {
+			undeclared = true
+			return
+		}
 		d := paramDomain(p)
 		if len(d) == 0 || containsFold(names, p.Name) {
 			return
@@ -132,7 +137,7 @@ func constantCondition(ast expr.Node, params []*template.Param) (value bool, inv
 		names, domains = append(names, p.Name), append(domains, d)
 		combos *= len(d)
 	})
-	if combos > maxCombos {
+	if undeclared || combos > maxCombos {
 		return false, nil, false
 	}
 	first, have := false, false
@@ -296,6 +301,9 @@ func stageDeps(s *model.Stage) map[string]bool {
 }
 
 func checkDependencyDeclared(c *lint.PipelineContext) {
+	if c.Pipeline.Partial {
+		return // dependsOn lists and dependencies may come from the including pipeline
+	}
 	for _, s := range c.Pipeline.Stages {
 		if !s.Implicit {
 			sd := stageDeps(s)
@@ -324,7 +332,7 @@ func reportMissingDeps(c *lint.PipelineContext, at *yaml.Node, refs []string, de
 	seen := map[string]bool{}
 	for _, r := range refs {
 		lr := strings.ToLower(r)
-		if declared[lr] || seen[lr] || hasDynamic(r) || hasDynamic(name) {
+		if declared[lr] || seen[lr] || hasDynamic(r) || hasDynamic(name) || c.Doc.Conditional(at) {
 			continue
 		}
 		seen[lr] = true

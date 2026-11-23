@@ -2,6 +2,7 @@ package expr
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -143,6 +144,19 @@ func init() {
 	regStatus("succeeded", -1)
 	regStatus("succeededOrFailed", -1)
 }
+
+// Funcs returns all built-in functions sorted by name.
+func Funcs() []*Func {
+	out := make([]*Func, 0, len(funcs))
+	for _, f := range funcs {
+		out = append(out, f)
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
+	return out
+}
+
+// Arity describes how many arguments the function takes.
+func (f *Func) Arity() string { return arity(f) }
 
 // LookupFunc returns the built-in function with the given (case-insensitive) name.
 func LookupFunc(name string) (*Func, bool) {

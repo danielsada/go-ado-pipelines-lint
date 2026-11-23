@@ -1,0 +1,11 @@
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include: [sdk/storage/]
+    exclude: [/docs/*, docs/]
+pr:
+  paths:
+    exclude: [/eng/*]
+steps:
+- script: echo
