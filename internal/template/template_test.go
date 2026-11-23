@@ -248,6 +248,42 @@ stages:
 	}
 }
 
+func TestTypedObjectValues(t *testing.T) {
+	r := expandFS(t, memFS{
+		"azure-pipelines.yml": `
+parameters:
+- name: cfg
+  type: object
+  default: { publish: false, retries: 9, label: 'false' }
+trigger: none
+steps:
+- ${{ if parameters.cfg.publish }}:
+  - script: publish
+- ${{ else }}:
+  - script: skip
+- ${{ if gt(parameters.cfg.retries, 10) }}:
+  - script: many
+- ${{ if parameters.cfg.label }}:
+  - script: quoted string is truthy
+- template: t.yml
+  parameters:
+    name: true
+`,
+		"t.yml": "parameters:\n- name: name\n  type: string\nsteps:\n- ${{ if eq(parameters.name, 'true') }}:\n  - script: string param\n",
+	}, "azure-pipelines.yml")
+	assertExpanded(t, r, `
+trigger: none
+parameters:
+- name: cfg
+  type: object
+  default: { publish: false, retries: 9, label: 'false' }
+steps:
+- script: skip
+- script: quoted string is truthy
+- script: string param
+`)
+}
+
 func TestExtendsAndVariables(t *testing.T) {
 	r := expandFS(t, memFS{
 		"azure-pipelines.yml": `

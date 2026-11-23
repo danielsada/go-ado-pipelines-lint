@@ -119,7 +119,8 @@ $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) { '{"missing":true,"results":[]}'; exit 0 }
 Import-Module PSScriptAnalyzer
-$items = @([Console]::In.ReadToEnd() | ConvertFrom-Json)
+# Windows PowerShell 5.1 emits a JSON array as a single object; enumerate it explicitly.
+$items = @(([Console]::In.ReadToEnd() | ConvertFrom-Json) | ForEach-Object { $_ })
 $out = [System.Collections.Generic.List[object]]::new()
 foreach ($i in $items) {
   try { $res = @(Invoke-ScriptAnalyzer -ScriptDefinition $i.script) }

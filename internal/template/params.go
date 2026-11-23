@@ -111,7 +111,7 @@ func typed(p *Param, n *yaml.Node) (expr.Value, string) {
 		if n.Kind != yaml.ScalarNode {
 			return v, "must be a string, got " + yamlx.KindName(n)
 		}
-		return v, checkValues(p, n.Value)
+		return withNode(expr.Str(n.Value), n), checkValues(p, n.Value)
 	case "steplist", "joblist", "stagelist", "deploymentlist", "containerlist", "stringlist":
 		if n.Kind != yaml.SequenceNode && !yamlx.IsNull(n) {
 			return v, fmt.Sprintf("must be a %s (a sequence), got %s", p.Type, yamlx.KindName(n))

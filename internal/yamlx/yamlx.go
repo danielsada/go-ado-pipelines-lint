@@ -82,7 +82,7 @@ func duplicateKeys(src *Source, n *yaml.Node, ds []diag.Diagnostic) []diag.Diagn
 		seen := map[string]*yaml.Node{}
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			k := n.Content[i]
-			if k.Kind == yaml.ScalarNode {
+			if k.Kind == yaml.ScalarNode && !isDirectiveKey(k.Value) {
 				if prev, ok := seen[k.Value]; ok {
 					ds = append(ds, diag.Diagnostic{
 						RuleID:   RuleDuplicateKey,
@@ -102,6 +102,13 @@ func duplicateKeys(src *Source, n *yaml.Node, ds []diag.Diagnostic) []diag.Diagn
 		}
 	}
 	return ds
+}
+
+// isDirectiveKey reports whether a key is a ${{ }} expression. Azure Pipelines doesn't require those to be
+// unique (two if/else groups in one mapping both have an ${{ else }} key).
+func isDirectiveKey(k string) bool {
+	k = strings.TrimSpace(k)
+	return strings.HasPrefix(k, "${{") && strings.HasSuffix(k, "}}")
 }
 
 // Deref follows alias nodes.

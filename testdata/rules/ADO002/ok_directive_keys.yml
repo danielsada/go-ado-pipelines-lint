@@ -1,0 +1,16 @@
+parameters:
+- name: env
+  type: string
+  default: dev
+trigger: none
+variables:
+  ${{ if eq(parameters.env, 'prod') }}:
+    tier: premium
+  ${{ else }}:
+    tier: basic
+  ${{ if eq(parameters.env, 'dev') }}:
+    loc: westeurope
+  ${{ else }}:
+    loc: eastus
+steps:
+- script: echo

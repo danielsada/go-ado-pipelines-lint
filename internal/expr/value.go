@@ -83,10 +83,7 @@ func FromNode(n *yaml.Node) Value {
 	}
 	switch n.Kind {
 	case yaml.ScalarNode:
-		if n.Tag == "!!null" {
-			return Value{Kind: KNull, Node: n}
-		}
-		return Value{Kind: KString, S: n.Value, Node: n}
+		return scalarValue(n)
 	case yaml.SequenceNode:
 		v := Value{Kind: KArray, Node: n}
 		for _, c := range n.Content {
@@ -101,6 +98,24 @@ func FromNode(n *yaml.Node) Value {
 		return v
 	}
 	return Null()
+}
+
+// scalarValue converts a scalar node. Plain (unquoted) YAML booleans, numbers and nulls keep their
+// types, as in Azure Pipelines' YAML reader; quoted scalars are always strings.
+func scalarValue(n *yaml.Node) Value {
+	if n.Style&(yaml.SingleQuotedStyle|yaml.DoubleQuotedStyle|yaml.LiteralStyle|yaml.FoldedStyle) == 0 {
+		switch n.Tag {
+		case "!!null":
+			return Value{Kind: KNull, Node: n}
+		case "!!bool":
+			return Value{Kind: KBool, B: strings.EqualFold(n.Value, "true"), Node: n}
+		case "!!int", "!!float":
+			if f, err := strconv.ParseFloat(strings.ReplaceAll(n.Value, "_", ""), 64); err == nil {
+				return Value{Kind: KNumber, N: f, Node: n}
+			}
+		}
+	}
+	return Value{Kind: KString, S: n.Value, Node: n}
 }
 
 // Truthy converts the value to a boolean. ok is false for unknown values.

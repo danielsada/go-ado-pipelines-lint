@@ -20,7 +20,7 @@ type suppressions struct {
 type idSet map[string]bool
 
 func (s idSet) matches(d diag.Diagnostic) bool {
-	return s == nil || s[d.RuleID] || s[d.FullID()]
+	return s == nil || s[strings.ToUpper(d.RuleID)] || s[strings.ToUpper(d.FullID())]
 }
 
 func parseIDs(s string) idSet {
