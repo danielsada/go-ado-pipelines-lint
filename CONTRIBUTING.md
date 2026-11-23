@@ -86,6 +86,10 @@ Thanks for your interest in contributing! Here's how to get started.
 [microsoft/azure-pipelines-vscode](https://github.com/microsoft/azure-pipelines-vscode). Run the tests afterwards;
 the valid fixtures catch schema changes that would cause false positives.
 
+## Releasing
+
+Push a `vX.Y.Z` tag on `main`: the Release workflow runs GoReleaser and publishes binaries for Linux, macOS and Windows (amd64 and arm64). The Azure Pipelines template in `templates/adolint.yml` installs `latest` by default, so it needs no change per release; update the pinned `ref: refs/tags/...` examples in `README.md` and `docs/azure-pipelines.md`.
+
 ## Reporting Issues
 
 Open a GitHub issue with:

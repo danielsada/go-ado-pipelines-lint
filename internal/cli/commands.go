@@ -152,6 +152,9 @@ func (a *App) writeReport(f *lintFlags, s *session, ds []diag.Diagnostic, files 
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(s.dir, path)
 		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
 		fh, err := a.Create(path)
 		if err != nil {
 			return err

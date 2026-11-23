@@ -71,7 +71,7 @@ func statusAware(ast expr.Node) bool {
 
 func checkConditionOverridesDefault(c *lint.SourceContext) {
 	unitConditions(c.Src.Root, func(unit, cond *yaml.Node, ast expr.Node) {
-		if _, constant := expr.Eval(ast, expr.NewContext()).Truthy(); constant || statusAware(ast) {
+		if _, constant := expr.Eval(ast, expr.NewContext()).Truthy(); constant || statusAware(ast) || isPublishStep(unit) || noUpstream(unit) {
 			return
 		}
 		c.Report("ADO603", cond, fmt.Sprintf("condition does not check status, so the %s runs even if earlier work failed (a custom condition replaces the default succeeded()); use and(succeeded(), %s)", unitKind(unit), strings.TrimSpace(cond.Value)))
@@ -80,6 +80,9 @@ func checkConditionOverridesDefault(c *lint.SourceContext) {
 
 func checkAlwaysRuns(c *lint.SourceContext) {
 	unitConditions(c.Src.Root, func(unit, cond *yaml.Node, ast expr.Node) {
+		if isPublishStep(unit) {
+			return
+		}
 		found := false
 		expr.Walk(ast, func(x expr.Node) bool {
 			if call, ok := x.(*expr.Call); ok && strings.EqualFold(call.Name, "always") {
@@ -91,6 +94,28 @@ func checkAlwaysRuns(c *lint.SourceContext) {
 			c.Report("ADO604", cond, fmt.Sprintf("always() also runs the %s when the run is canceled; use succeededOrFailed() or not(canceled()) unless that is intended", unitKind(unit)))
 		}
 	})
+}
+
+// isPublishStep reports whether a step publishes results, logs or artifacts. Such steps are meant to
+// run after failures (and often on cancellation), so conditions without succeeded() or with always()
+// are intentional there.
+func isPublishStep(m *yaml.Node) bool {
+	if yamlx.Has(m, "publish") || yamlx.Has(m, "upload") {
+		return true
+	}
+	task := strings.ToLower(yamlx.Str(m, "task"))
+	return strings.HasPrefix(task, "publish") || strings.HasPrefix(task, "copyfiles@")
+}
+
+// noUpstream reports whether a job or stage has nothing it depends on, so the default succeeded()
+// condition is always true and a custom condition can't drop it: a job without dependsOn, or a
+// stage or job with an explicitly empty dependsOn.
+func noUpstream(m *yaml.Node) bool {
+	k, deps := yamlx.Get(m, "dependsOn")
+	if k != nil {
+		return yamlx.IsSeq(deps) && len(deps.Content) == 0
+	}
+	return yamlx.Has(m, "job") || yamlx.Has(m, "deployment")
 }
 
 // maxCombos bounds the parameter value combinations explored for template conditions.

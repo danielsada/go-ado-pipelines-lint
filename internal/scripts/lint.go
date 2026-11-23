@@ -21,7 +21,8 @@ const (
 var ErrRequiredToolMissing = errors.New("required script linter is not installed")
 
 // RecommendedShellCheck is the curated, CI-relevant ShellCheck subset (plus all SC1xxx parse errors).
-var RecommendedShellCheck = []string{"SC2086", "SC2046", "SC2164", "SC2155", "SC2181", "SC2034"}
+// SC2086 (unquoted variables) is left out: on pipeline scripts it mostly flags controlled CI values.
+var RecommendedShellCheck = []string{"SC2046", "SC2164", "SC2155", "SC2181", "SC2034"}
 
 // DefaultExcludedShellCheck are codes that misfire on Azure Pipelines scripts (variables injected
 // as environment variables, files sourced from the agent); they are dropped unless explicitly included.

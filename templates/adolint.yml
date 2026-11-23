@@ -1,0 +1,85 @@
+# Azure Pipelines steps template: install adolint from a GitHub release and lint pipelines.
+# Docs: https://danielsada.github.io/go-ado-pipelines-lint/azure-pipelines/
+#
+#   resources:
+#     repositories:
+#     - repository: adolint
+#       type: github
+#       endpoint: my-github-connection   # a GitHub service connection in your project
+#       name: danielsada/go-ado-pipelines-lint
+#       ref: refs/tags/v0.1.2
+#   steps:
+#   - template: templates/adolint.yml@adolint
+parameters:
+- name: version
+  displayName: adolint release to install, e.g. 0.1.2, or latest
+  type: string
+  default: 'latest'
+- name: arguments
+  displayName: Arguments passed to adolint
+  type: string
+  default: 'lint'
+- name: workingDirectory
+  displayName: Directory to lint from (the repository root by default)
+  type: string
+  default: '$(Build.SourcesDirectory)'
+- name: sarif
+  displayName: Also write a SARIF report and publish it as the CodeAnalysisLogs artifact
+  type: boolean
+  default: false
+
+steps:
+- bash: |
+    set -euo pipefail
+    case "$(uname -s)-$(uname -m)" in
+      Linux-x86_64) platform=linux_amd64 ;;
+      Linux-aarch64 | Linux-arm64) platform=linux_arm64 ;;
+      Darwin-x86_64) platform=darwin_amd64 ;;
+      Darwin-arm64) platform=darwin_arm64 ;;
+      *) echo "##vso[task.logissue type=error]adolint has no release for $(uname -s) $(uname -m)"; exit 1 ;;
+    esac
+    version="$ADOLINT_VERSION"
+    if [ "$version" = latest ]; then
+      tag_url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/danielsada/go-ado-pipelines-lint/releases/latest)
+      version="${tag_url##*/v}"
+    fi
+    dir="$AGENT_TOOLSDIRECTORY/adolint/$version"
+    mkdir -p "$dir"
+    curl -fsSL "https://github.com/danielsada/go-ado-pipelines-lint/releases/download/v${version}/adolint_${version}_${platform}.tar.gz" | tar -xz -C "$dir"
+    echo "##vso[task.prependpath]$dir"
+  displayName: Install adolint ${{ parameters.version }}
+  condition: and(succeeded(), ne(variables['Agent.OS'], 'Windows_NT'))
+  env:
+    ADOLINT_VERSION: ${{ parameters.version }}
+
+- pwsh: |
+    $ErrorActionPreference = 'Stop'
+    $arch = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'amd64' }
+    $version = $env:ADOLINT_VERSION
+    if ($version -eq 'latest') {
+      $latest = Invoke-WebRequest -Method Head -Uri 'https://github.com/danielsada/go-ado-pipelines-lint/releases/latest'
+      $version = ($latest.BaseResponse.RequestMessage.RequestUri.AbsolutePath -split '/v')[-1]
+    }
+    $dir = Join-Path $env:AGENT_TOOLSDIRECTORY "adolint/$version"
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    $zip = Join-Path $env:AGENT_TEMPDIRECTORY 'adolint.zip'
+    Invoke-WebRequest "https://github.com/danielsada/go-ado-pipelines-lint/releases/download/v$version/adolint_$($version)_windows_$arch.zip" -OutFile $zip
+    Expand-Archive -Force $zip $dir
+    Write-Output "##vso[task.prependpath]$dir"
+  displayName: Install adolint ${{ parameters.version }} (Windows)
+  condition: and(succeeded(), eq(variables['Agent.OS'], 'Windows_NT'))
+  env:
+    ADOLINT_VERSION: ${{ parameters.version }}
+
+- ${{ if parameters.sarif }}:
+  - script: adolint ${{ parameters.arguments }} --format sarif --output "$(Build.ArtifactStagingDirectory)/CodeAnalysisLogs/adolint.sarif" --fail-on none
+    displayName: Write adolint SARIF report
+    workingDirectory: ${{ parameters.workingDirectory }}
+  - publish: $(Build.ArtifactStagingDirectory)/CodeAnalysisLogs
+    artifact: CodeAnalysisLogs
+    displayName: Publish SARIF report
+    condition: succeededOrFailed()
+
+- script: adolint ${{ parameters.arguments }}
+  displayName: Lint pipelines with adolint
+  workingDirectory: ${{ parameters.workingDirectory }}

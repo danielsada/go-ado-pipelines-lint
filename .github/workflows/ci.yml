@@ -56,3 +56,28 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go build -o adolint ./cmd/adolint
+
+  template:
+    name: Azure Pipelines template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Install script linters
+        run: |
+          command -v shellcheck || sudo apt-get install -y shellcheck
+          pwsh -NoProfile -Command 'if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { Install-Module PSScriptAnalyzer -Scope CurrentUser -Force }'
+      - name: Lint templates/ with adolint (all script rules, linters required)
+        run: |
+          printf 'scripts:\n  shellcheck: {profile: all}\n  psscriptanalyzer: {profile: all}\n' > "$RUNNER_TEMP/strict.yaml"
+          go run ./cmd/adolint lint templates/ --config "$RUNNER_TEMP/strict.yaml" --require-script-linters --fail-on info
+      - name: Run the template's install step
+        run: |
+          go run ./cmd/adolint extract templates/adolint.yml --out "$RUNNER_TEMP/scripts"
+          install="$(ls "$RUNNER_TEMP"/scripts/*.sh | head -n1)"
+          AGENT_TOOLSDIRECTORY="$RUNNER_TEMP/tools" ADOLINT_VERSION=latest bash "$install"
+          AGENT_TOOLSDIRECTORY="$RUNNER_TEMP/tools" ADOLINT_VERSION=0.1.1 bash "$install"
+          "$RUNNER_TEMP/tools/adolint/0.1.1/adolint" --version
+          ls "$RUNNER_TEMP/tools/adolint"

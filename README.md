@@ -30,6 +30,29 @@ Script linting is optional. It uses tools from your `PATH`, which are not bundle
 - [ShellCheck](https://github.com/koalaman/shellcheck#installing) (`shellcheck`)
 - PowerShell 7 (`pwsh`, or Windows PowerShell on Windows) with the PSScriptAnalyzer module: `Install-Module PSScriptAnalyzer -Scope CurrentUser`
 
+## Use it in Azure Pipelines
+
+Reference the reusable steps template. It installs adolint on Linux, macOS or Windows agents and runs it. GitHub repository resources need a GitHub service connection:
+
+```yaml
+resources:
+  repositories:
+  - repository: adolint
+    type: github
+    endpoint: my-github-connection
+    name: danielsada/go-ado-pipelines-lint
+    ref: refs/tags/v0.1.2
+
+steps:
+- checkout: self
+- template: templates/adolint.yml@adolint
+  parameters:
+    version: latest                  # or pin a release, e.g. 0.1.2
+    arguments: lint --fail-on error
+```
+
+See [Use in CI](https://danielsada.github.io/go-ado-pipelines-lint/azure-pipelines/) for copy-paste install steps that need no service connection, for SARIF publishing, and for GitHub Actions.
+
 ## Usage
 
 ```sh
@@ -84,7 +107,7 @@ Exit codes: `0` means no findings at or above `--fail-on`, `1` means findings, `
    - It evaluates `${{ }}` expressions and `if`/`elseif`/`else`/`each`/`insert` directives.
    - Local paths are resolved relative to the including file, or to the repository root for paths starting with `/`.
    - It applies the documented limits of 100 files and 100 nesting levels, and detects include cycles.
-   - Templates from other repositories (`path@alias`) are skipped with an info diagnostic (ADO202). Stages, jobs and steps passed as parameters to such an `extends` template are still linted.
+   - Templates from other repositories (`path@alias`) are not fetched; enable ADO202 to list them. Stages, jobs and steps passed as parameters to such an `extends` template are still linted.
    - `path@self` references are resolved relative to the including file, then from the repository root.
    - Templates that declare parameters in the legacy mapping form, or not at all, accept any parameter.
 3. **Unknown values stay unknown**:
@@ -122,7 +145,7 @@ Findings are reported as `ADO701/SCxxxx` or `ADO702/RuleName` at the exact YAML 
 
 The default `recommended` profile is a curated set of CI-relevant checks:
 
-- **ShellCheck**: every SC1xxx parse error, plus SC2086, SC2046, SC2164, SC2155, SC2181 and SC2034. SC2154, SC1090 and SC1091 are skipped because they misfire on agent-provided variables and files.
+- **ShellCheck**: every SC1xxx parse error, plus SC2046, SC2164, SC2155, SC2181 and SC2034. SC2086 (unquoted variables) is left out because on pipeline scripts it mostly flags controlled CI values; add it with `include: [SC2086]`. SC2154, SC1090 and SC1091 are skipped because they misfire on agent-provided variables and files.
 - **PSScriptAnalyzer**: parse errors, plus PSAvoidUsingPlainTextForPassword, PSAvoidUsingConvertToSecureStringWithPlainText, PSAvoidUsingInvokeExpression, PSUseDeclaredVarsMoreThanAssignments, PSAvoidUsingEmptyCatchBlock and PSPossibleIncorrectComparisonWithNull.
 
 Use `profile: all` or `profile: none`, or `include` and `exclude` lists, to change this. Tool-native suppressions inside scripts (`# shellcheck disable=SC2086`) keep working.
@@ -188,8 +211,8 @@ Each rule has a page with details, examples and configuration at `https://daniel
 | [ADO103](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO103/) | `unknown-dependency` | error | dependsOn references a stage or job that doesn't exist. |
 | [ADO104](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO104/) | `dependency-cycle` | error | Stages or jobs depend on each other in a cycle. |
 | [ADO105](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO105/) | `task-version-missing` | error | A task reference has no major version. |
-| [ADO201](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO201/) | `invalid-template-reference` | error | A local template can't be found or doesn't fit where it is used. |
-| [ADO202](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO202/) | `template-not-resolved` | info | A template wasn't expanded, so its contents aren't linted. |
+| [ADO201](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO201/) | `invalid-template-reference` | error (off by default) | A local template can't be found or doesn't fit where it is used. |
+| [ADO202](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO202/) | `template-not-resolved` | info (off by default) | A template wasn't expanded, so its contents aren't linted. |
 | [ADO203](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO203/) | `unexpected-parameter` | error | A parameter is passed that the template doesn't declare. |
 | [ADO204](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO204/) | `missing-parameter` | error | A required template parameter is not passed. |
 | [ADO205](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO205/) | `parameter-value-invalid` | error | A parameter value doesn't match the declared type or allowed values. |
@@ -204,7 +227,7 @@ Each rule has a page with details, examples and configuration at `https://daniel
 | [ADO402](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO402/) | `implicit-pr-trigger` | info (off by default) | No pr trigger is defined, so PR validation runs for every branch. |
 | [ADO403](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO403/) | `hardcoded-secret` | warning | A secret-looking variable has a literal value. |
 | [ADO404](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO404/) | `retired-vm-image` | warning | A Microsoft-hosted image is retired or deprecated. |
-| [ADO405](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO405/) | `continue-on-error` | info | continueOnError: true hides failures. |
+| [ADO405](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO405/) | `continue-on-error` | info (off by default) | continueOnError: true hides failures. |
 | [ADO501](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO501/) | `unknown-task` | info | The task isn't a known built-in task or version. |
 | [ADO502](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO502/) | `invalid-task-input` | warning | A task input isn't defined for this built-in task version, or has a value outside its allowed list. |
 | [ADO503](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO503/) | `missing-task-input` | warning | A required input of a built-in task is missing. |

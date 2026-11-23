@@ -1,6 +1,6 @@
 ---
 title: Rules
-nav_order: 3
+nav_order: 4
 has_children: true
 permalink: /rules/
 ---
@@ -36,8 +36,8 @@ These are all the rules adolint can report. Run `adolint explain <ID>` to see th
 
 | ID | Name | Default | Summary |
 | --- | --- | --- | --- |
-| [ADO201](ADO201/) | `invalid-template-reference` | error | A local template can't be found or doesn't fit where it is used. |
-| [ADO202](ADO202/) | `template-not-resolved` | info | A template wasn't expanded, so its contents aren't linted. |
+| [ADO201](ADO201/) | `invalid-template-reference` | error (off by default) | A local template can't be found or doesn't fit where it is used. |
+| [ADO202](ADO202/) | `template-not-resolved` | info (off by default) | A template wasn't expanded, so its contents aren't linted. |
 | [ADO203](ADO203/) | `unexpected-parameter` | error | A parameter is passed that the template doesn't declare. |
 | [ADO204](ADO204/) | `missing-parameter` | error | A required template parameter is not passed. |
 | [ADO205](ADO205/) | `parameter-value-invalid` | error | A parameter value doesn't match the declared type or allowed values. |
@@ -62,7 +62,7 @@ These are all the rules adolint can report. Run `adolint explain <ID>` to see th
 | [ADO402](ADO402/) | `implicit-pr-trigger` | info (off by default) | No pr trigger is defined, so PR validation runs for every branch. |
 | [ADO403](ADO403/) | `hardcoded-secret` | warning | A secret-looking variable has a literal value. |
 | [ADO404](ADO404/) | `retired-vm-image` | warning | A Microsoft-hosted image is retired or deprecated. |
-| [ADO405](ADO405/) | `continue-on-error` | info | continueOnError: true hides failures. |
+| [ADO405](ADO405/) | `continue-on-error` | info (off by default) | continueOnError: true hides failures. |
 
 ## Tasks
 

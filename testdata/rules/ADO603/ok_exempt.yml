@@ -1,0 +1,19 @@
+trigger: none
+stages:
+- stage: Build
+  jobs:
+  - job: Independent
+    condition: ne(variables['Build.Reason'], 'Schedule')
+    steps:
+    - script: ./test.sh
+    - task: PublishTestResults@2
+      condition: eq(variables['Agent.OS'], 'Linux')
+      inputs:
+        testResultsFiles: '**/TEST-*.xml'
+    - publish: $(Build.ArtifactStagingDirectory)
+      artifact: logs
+      condition: ne(variables['upload'], 'false')
+- stage: Standalone
+  dependsOn: []
+  condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
+  jobs: []

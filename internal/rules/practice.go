@@ -38,7 +38,15 @@ var (
 	secretNameRe   = regexp.MustCompile(`(?i)(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|connection[_-]?string|client[_-]?secret|credential)`)
 	secretExceptRe = regexp.MustCompile(`(?i)(name|names|url|uri|file|path|id|type|version|enabled|length|count|scope|endpoint|connection|header|location|kind|mode|policy)$`)
 	nonSecretRe    = regexp.MustCompile(`(?i)^(true|false|yes|no|on|off|none|null|\d{1,3})$`)
+	connStrRe      = regexp.MustCompile(`^\s*[A-Za-z][\w ]*=[^;]*(;\s*[A-Za-z][\w ]*=[^;]*)*;?\s*$`)
+	connSecretRe   = regexp.MustCompile(`(?i)(^|;)\s*(password|pwd|accountkey|sharedaccesskey|sharedaccesssignature|appkey|clientsecret|secret|token|sig|key)\s*=`)
 )
+
+// credentialFree reports whether v is a connection string without any credential,
+// e.g. "RunAs=App;AppId=...;TenantId=..." for managed identities.
+func credentialFree(v string) bool {
+	return strings.Contains(v, ";") && connStrRe.MatchString(v) && !connSecretRe.MatchString(v)
+}
 
 // looksSecret reports whether a secret-named value is a literal in the source (not produced by an expression).
 func looksSecret(c *lint.PipelineContext, name string, value *yaml.Node) bool {
@@ -49,7 +57,7 @@ func looksSecret(c *lint.PipelineContext, name string, value *yaml.Node) bool {
 		return false
 	}
 	v := strings.TrimSpace(value.Value)
-	return v != "" && !expr.HasDynamic(v) && !nonSecretRe.MatchString(v)
+	return v != "" && !expr.HasDynamic(v) && !nonSecretRe.MatchString(v) && !credentialFree(v)
 }
 
 func checkHardcodedSecrets(c *lint.PipelineContext) {

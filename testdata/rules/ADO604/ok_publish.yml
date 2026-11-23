@@ -1,0 +1,11 @@
+trigger: none
+steps:
+- script: ./test.sh
+- task: PublishTestResults@2
+  condition: always()
+  inputs:
+    testResultsFiles: '**/TEST-*.xml'
+- task: PublishPipelineArtifact@1
+  condition: always()
+  inputs:
+    targetPath: logs
