@@ -56,7 +56,11 @@ Thanks for your interest in contributing! Here's how to get started.
 3. Base the rule on the [Azure Pipelines documentation](https://learn.microsoft.com/azure/devops/pipelines/yaml-schema/) or the official schema. Don't guess at service behavior.
 4. Add fixtures under `testdata/rules/<ID>/`. Mark each expected diagnostic with a trailing `# want: <ID>` comment on the reported line, and add `ok_*.yml` cases that must stay clean. The harness fails if a registered rule has no fixtures.
 5. Make sure `testdata/valid/` still produces no errors or warnings.
-6. Update the rules table in `README.md`.
+6. Run `make docs` to regenerate the rule pages in `docs/rules/` (`go test ./internal/docs` fails if they are stale), and update the rules table in `README.md`.
+
+### Documentation site
+
+`docs/` is a Jekyll site (just-the-docs theme) published to GitHub Pages by `.github/workflows/pages.yml` on pushes to `main`. Rule pages are generated; `index.md`, `usage.md` and `configuration.md` are written by hand. Enable it once under **Settings → Pages → Source: GitHub Actions**.
 
 ## Code Style
 

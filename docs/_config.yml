@@ -1,0 +1,16 @@
+title: adolint
+description: Parse and lint Azure DevOps (Azure Pipelines) YAML
+url: https://danielsada.github.io
+baseurl: /go-ado-pipelines-lint
+remote_theme: just-the-docs/just-the-docs@v0.10.1
+plugins:
+  - jekyll-remote-theme
+search_enabled: true
+heading_anchors: true
+aux_links:
+  GitHub: https://github.com/danielsada/go-ado-pipelines-lint
+gh_edit_link: true
+gh_edit_repository: https://github.com/danielsada/go-ado-pipelines-lint
+gh_edit_branch: main
+gh_edit_source: docs
+footer_content: "adolint is MIT licensed. Rule pages are generated from the rule registry (`make docs`)."

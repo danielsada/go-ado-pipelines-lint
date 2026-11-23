@@ -1,4 +1,4 @@
-.PHONY: all lint vet build test clean schema-update
+.PHONY: all lint vet build test clean schema-update docs
 
 BINARY := adolint
 GOBIN  := $(shell go env GOPATH)/bin
@@ -20,6 +20,10 @@ test:
 
 clean:
 	rm -f $(BINARY)
+
+# Regenerate the rule pages in docs/rules from the rule registry (checked by go test ./internal/docs).
+docs:
+	go run ./cmd/gendocs docs
 
 # Refresh the embedded Azure Pipelines schema from microsoft/azure-pipelines-vscode (MIT).
 schema-update:
