@@ -39,6 +39,11 @@ func (m memFS) display(abs string) string {
 
 func expandFS(t *testing.T, files memFS, entry string) *Result {
 	t.Helper()
+	return expandLimited(t, files, entry, 0)
+}
+
+func expandLimited(t *testing.T, files memFS, entry string, limit int) *Result {
+	t.Helper()
 	loader := NewLoader(files.read, files.display)
 	src, err := loader.Load(files.abs(entry))
 	if err != nil {
@@ -47,7 +52,7 @@ func expandFS(t *testing.T, files memFS, entry string) *Result {
 	if len(src.ParseDiags) > 0 {
 		t.Fatalf("parse diags: %v", src.ParseDiags)
 	}
-	return ExpandPipeline(src, Options{RepoRoot: files.abs(""), Loader: loader})
+	return ExpandPipeline(src, Options{RepoRoot: files.abs(""), Loader: loader, WorkLimit: limit, TextLimit: TextLimit(limit)})
 }
 
 func normalize(t *testing.T, n *yaml.Node) any {
@@ -439,12 +444,15 @@ func TestConditionalAlternativeBudget(t *testing.T) {
     continueOnError: false
 `
 	files := memFS{"main.yml": "parameters:\n- name: flag\n  type: boolean\n  default: false\nsteps:\n" + strings.Repeat(step, 100)}
-	res := expandFS(t, files, "main.yml")
-	if len(res.Diags) != 1 || res.Diags[0].RuleID != RuleLimits || !strings.Contains(res.Diags[0].Message, "work limit") {
-		t.Fatalf("expected one work-limit diagnostic, got %+v", res.Diags)
+	if res := expandFS(t, files, "main.yml"); len(res.Diags) != 0 || len(res.Alternatives) != 200 {
+		t.Fatalf("without a budget every alternative is checked: %d alternatives, %v", len(res.Alternatives), rules(res.Diags))
 	}
-	if res.Doc.Root != nil || len(res.Alternatives) != 0 {
-		t.Fatal("aborted expansion must discard all partial views")
+	res := expandLimited(t, files, "main.yml", DefaultWorkLimit)
+	if len(res.Diags) != 1 || res.Diags[0].RuleID != RuleLimits || res.Diags[0].Severity != diag.Info || !strings.Contains(res.Diags[0].Message, "work limit") {
+		t.Fatalf("expected one work-limit info, got %+v", res.Diags)
+	}
+	if n := len(yamlx.Items(yamlx.Value(res.Doc.Root, "steps"))); n != 100 || len(res.Alternatives) == 0 || len(res.Alternatives) >= 200 {
+		t.Fatalf("budget should keep the expanded document and stop adding alternatives: %d steps, %d alternatives", n, len(res.Alternatives))
 	}
 }
 
@@ -459,9 +467,15 @@ func TestExpansionBudgets(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			calls := fmt.Sprintf("- template: recurse.yml\n  parameters:\n    %s: ${{ %s }}\n%s", tt.parameter, tt.next, tt.branches)
 			recurse := fmt.Sprintf("parameters:\n- name: %s\n  type: string\n  default: x\nsteps:\n- bash: echo run\n- ${{ if lt(length(parameters.%s), %s) }}:\n  %s", tt.parameter, tt.parameter, tt.limit, strings.ReplaceAll(calls, "\n", "\n  "))
-			r := expandFS(t, memFS{"azure-pipelines.yml": "steps:\n- template: recurse.yml\n", "recurse.yml": recurse}, "azure-pipelines.yml")
-			if len(r.Diags) != 1 || !hasRule(r.Diags, RuleLimits, tt.want) || r.Doc.Root != nil || len(r.Alternatives) != 0 {
-				t.Fatalf("expansion should abort once with %s, got %v", tt.want, rules(r.Diags))
+			entry := "steps:\n- bash: echo first\n- template: recurse.yml\n- ${{ each n in split('a,b', ',') }}:\n  - bash: echo ${{ n }}\n- bash: echo last\n"
+			r := expandLimited(t, memFS{"azure-pipelines.yml": entry, "recurse.yml": recurse}, "azure-pipelines.yml", DefaultWorkLimit)
+			if len(r.Diags) != 1 || !hasRule(r.Diags, RuleLimits, tt.want) || r.Diags[0].Severity != diag.Info {
+				t.Fatalf("expansion should stop once with a %s info, got %v", tt.want, rules(r.Diags))
+			}
+			steps := yamlx.Value(r.Doc.Root, "steps")
+			items := yamlx.Items(steps)
+			if len(items) < 3 || yamlx.Str(items[0], "bash") != "echo first" || yamlx.Str(items[len(items)-1], "bash") != "echo last" || !r.Doc.Open(steps) {
+				t.Fatalf("the partial document should keep the entry's own steps and be marked open: %d steps", len(items))
 			}
 		})
 	}

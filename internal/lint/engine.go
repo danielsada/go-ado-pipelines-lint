@@ -35,8 +35,10 @@ type Options struct {
 	// Overrides are per-rule severities from the command line; they take precedence over Config.
 	Overrides map[string]diag.Severity
 	// RepoRoot resolves template paths starting with "/".
-	RepoRoot             string
-	NoTemplates          bool
+	RepoRoot    string
+	NoTemplates bool
+	// ExpansionLimit is an optional per-entry node-operation budget for template expansion (0: no limit).
+	ExpansionLimit       int
 	NoScripts            bool
 	RequireScriptLinters bool
 	Runner               scripts.Runner
@@ -130,6 +132,7 @@ func (e *Engine) templateOptions(src *yamlx.Source) template.Options {
 		RepoRoot: e.opts.RepoRoot, SourceRoot: e.sourceRoot(src),
 		Repositories: e.opts.Config.RepositoryRoots(), IgnoreRepositories: e.opts.Config.Templates.IgnoreRepositories,
 		Loader: e.loader, NoTemplates: e.opts.NoTemplates,
+		WorkLimit: e.opts.ExpansionLimit, TextLimit: template.TextLimit(e.opts.ExpansionLimit),
 	}
 }
 

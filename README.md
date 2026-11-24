@@ -78,6 +78,7 @@ Without arguments, `lint` searches the working directory for `azure-pipelines*.y
 | `--enable IDS` / `--disable IDS` | Enable (at default severity) or disable rules, comma-separated. These override the config file. |
 | `--fail-on error\|warning\|info\|none` | Lowest severity that makes the exit code 1 (default `warning`). |
 | `--no-templates` | Don't expand template files. |
+| `--limit-expansion[=N]` | Opt in to a per-entry expansion budget (default 100,000 node operations; use `=N` for a custom value). Over budget, ADO208 is reported as info and linting continues on the partial expansion. |
 | `--no-scripts` | Don't run ShellCheck or PSScriptAnalyzer. |
 | `--require-script-linters` | Exit with code 2 if a needed script linter is missing. |
 | `--repo-root DIR` | Root for template paths that start with `/` (default: the nearest directory containing `.git`). |
@@ -106,7 +107,7 @@ Exit codes: `0` means no findings at or above `--fail-on`, `1` means findings, `
    - It binds parameters with type and `values` checks.
    - It evaluates `${{ }}` expressions and `if`/`elseif`/`else`/`each`/`insert` directives.
    - Local paths are resolved relative to the including file, or to the repository root for paths starting with `/`.
-   - It applies the documented limits of 100 files and 100 nesting levels, and detects include cycles. Each expansion also has local safety budgets of 100,000 node operations and 16 MiB of generated or evaluated scalar text; exceeding either aborts that entry's expansion with ADO208.
+   - It applies the documented limits of 100 files and 100 nesting levels, and detects include cycles. No local work budget applies by default. For untrusted YAML or a hard bound, `--limit-expansion` (or `templates.limitExpansion`) caps each expansion at 100,000 node operations and 16 MiB of generated or evaluated scalar text, including conditional alternatives; `--limit-expansion=N` sets N operations and scales the text budget proportionally. When a budget is hit, ADO208 is reported as info, further templates, loops and alternatives in that entry are not expanded, and the partially expanded entry is still linted.
    - Templates from other repositories (`path@alias`) are expanded when `repositories` maps the alias to a local checkout. Nothing is fetched; enable ADO202 to list unresolved references. Stages, jobs and steps passed as parameters to an unresolved `extends` template are still linted.
    - `path@self` references are resolved relative to the including file, then from the repository root.
    - Templates that declare parameters in the legacy mapping form, or not at all, accept any parameter.
@@ -170,6 +171,7 @@ templates:
   repoRoot: .          # root for template paths starting with "/"
   lintReferenced: false # opt in to checking branches no caller enables
   ignoreRepositories: [] # aliases to skip, e.g. [OneBranch, External]
+  limitExpansion: false # opt-in budget: true (100000) or node operations, e.g. 500000
 repositories:          # local checkouts, relative to this config file
   Infra: ../Infra
 tasks:

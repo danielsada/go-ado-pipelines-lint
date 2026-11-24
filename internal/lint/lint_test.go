@@ -461,53 +461,62 @@ steps:
 	}
 }
 
-func TestExpansionBudgetIsolation(t *testing.T) {
-	step := "- bash: echo skipped\n  ${{ if parameters.flag }}:\n    continueOnError: true\n  ${{ else }}:\n    continueOnError: false\n"
+func TestExpansionBudgetKeepsLinting(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"large.yml": "parameters:\n- name: flag\n  type: boolean\n  default: false\nsteps:\n" + strings.Repeat(step, 100),
-		"good.yml":  "trigger: none\nsteps:\n- task: MissingVersion\n- bash: cd preserved\n",
+		"azure-pipelines.yml": `trigger: none
+parameters:
+- name: suites
+  type: object
+  default: [a, b, c, d, e, f]
+stages:
+- stage: build
+  jobs:
+  - job: build
+    steps:
+    - task: MissingVersion
+  - ${{ each suite in parameters.suites }}:
+    - job: test_${{ suite }}
+      steps:
+      - template: shard.yml
+- ${{ each suite in parameters.suites }}:
+    stage: more_${{ suite }}
+    jobs:
+    - job: more
+      steps:
+      - bash: echo more
+- stage: after
+  dependsOn: [build, more_a]
+  jobs:
+  - job: after
+    steps:
+    - bash: echo after
+      continueOnError: maybe
+`,
+		"shard.yml": "steps:\n- ${{ each shard in split('1,2,3,4,5,6,7,8', ',') }}:\n  - bash: echo ${{ shard }}\n    displayName: Shard ${{ shard }}\n",
 	})
-	for _, order := range [][]string{{"large.yml", "good.yml"}, {"good.yml", "large.yml"}} {
-		t.Run(strings.Join(order, ","), func(t *testing.T) {
-			runner := &recordingRunner{}
-			eng, err := lint.New(lint.Options{Registry: rules.Registry(), Config: config.Default(dir), RepoRoot: dir, Runner: runner})
-			if err != nil {
-				t.Fatal(err)
+	for _, limit := range []int{0, 300} {
+		eng, err := lint.New(lint.Options{Registry: rules.Registry(), Config: config.Default(dir), RepoRoot: dir, NoScripts: true, ExpansionLimit: limit})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ds, err := eng.Lint(context.Background(), []lint.Input{{Abs: filepath.Join(dir, "azure-pipelines.yml"), Path: "azure-pipelines.yml"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		counts := map[string]int{}
+		for _, d := range ds {
+			counts[d.RuleID]++
+			if d.RuleID == "ADO208" && d.Severity != diag.Info {
+				t.Errorf("limit %d: budget must be info, got %+v", limit, d)
 			}
-			var inputs []lint.Input
-			for _, name := range order {
-				inputs = append(inputs, lint.Input{Abs: filepath.Join(dir, name), Path: name})
-			}
-			var previous string
-			for attempt := 0; attempt < 2; attempt++ {
-				before := len(runner.bash)
-				ds, err := eng.Lint(context.Background(), inputs)
-				if err != nil {
-					t.Fatal(err)
-				}
-				counts := map[string]int{}
-				for _, d := range ds {
-					counts[d.RuleID]++
-					if d.RuleID == "ADO208" && (d.File != "large.yml" || !strings.Contains(d.Message, "work limit")) {
-						t.Errorf("unexpected expansion failure: %+v", d)
-					}
-					if d.RuleID != "ADO208" && d.File != "good.yml" {
-						t.Errorf("partial expansion leaked a finding: %+v", d)
-					}
-				}
-				if len(ds) != 3 || counts["ADO208"] != 1 || counts["ADO105"] != 1 || counts["ADO701"] != 1 {
-					t.Errorf("budget failure hid or duplicated other findings: %s", summary(ds))
-				}
-				if len(runner.bash)-before != 1 || runner.bash[before].Raw != "cd preserved" {
-					t.Fatal("only the healthy entry's script should be linted")
-				}
-				got := summary(ds)
-				if attempt > 0 && got != previous {
-					t.Errorf("reusing the engine changed findings:\n%s\n%s", previous, got)
-				}
-				previous = got
-			}
-		})
+		}
+		want := map[string]int{"ADO105": 1, "ADO006": 1}
+		if limit > 0 {
+			want["ADO208"] = 1
+		}
+		if len(ds) != len(want) || counts["ADO105"] != 1 || counts["ADO006"] != 1 || counts["ADO208"] != want["ADO208"] {
+			t.Errorf("limit %d: budget must not hide or add findings: %s", limit, summary(ds))
+		}
 	}
 }
 
