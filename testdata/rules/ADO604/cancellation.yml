@@ -1,0 +1,16 @@
+trigger: none
+steps:
+- script: echo cleanup
+  condition: and(always(), not(canceled()))
+- script: echo cleanup
+  condition: and(always(), eq(canceled(), false))
+- script: echo cleanup
+  condition: not(always())
+- script: echo cleanup
+  condition: or(always(), not(canceled())) # want: ADO604
+- script: echo cleanup
+  condition: and(always(), eq(variables.flag, 'true')) # want: ADO604
+- script: echo cleanup
+  condition: and(always(), not(canceled('job'))) # want: ADO604
+- script: echo cleanup
+  condition: and(always(), succeeded('job')) # want: ADO604

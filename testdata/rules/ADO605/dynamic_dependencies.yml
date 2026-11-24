@@ -1,0 +1,23 @@
+trigger: none
+parameters:
+- name: suffix
+  type: string
+  default: Prod
+  values: [Prod]
+stages:
+- stage: Build_${{ parameters.suffix }}
+  jobs: []
+- stage: Test
+  condition: eq(dependencies.Build_Prod.result, 'Succeeded')
+  jobs: []
+- stage: Later
+  dependsOn: Build_${{ parameters.suffix }}
+  variables:
+    flag: $[ stageDependencies.Build_Prod.build.outputs['s.flag'] ]
+  jobs: []
+- stage: Known
+  jobs: []
+- stage: MissingDependency
+  dependsOn: []
+  condition: eq(dependencies.Known.result, 'Succeeded') # want: ADO605
+  jobs: []

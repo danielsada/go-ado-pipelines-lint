@@ -14,6 +14,7 @@ import (
 
 // FindTask returns the schema branch for a built-in task reference like "Bash@3" (case-insensitive).
 func (v *Validator) FindTask(ref string) *Schema {
+	ref = MajorTaskRef(ref)
 	lk := strings.ToLower(ref)
 	if b, ok := v.taskCache[lk]; ok {
 		return b
@@ -66,6 +67,7 @@ func (v *Validator) taskNames() []string {
 
 // knownTaskName reports whether ref is in the schema's task-name enum.
 func (v *Validator) knownTaskName(ref string) bool {
+	ref = MajorTaskRef(ref)
 	for _, n := range v.taskNames() {
 		if strings.EqualFold(n, ref) {
 			return true
@@ -75,6 +77,15 @@ func (v *Validator) knownTaskName(ref string) bool {
 }
 
 var taskGUIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}@`)
+var pinnedTaskRe = regexp.MustCompile(`^(.+@[0-9]+)\.[0-9]+\.[0-9]+$`)
+
+// MajorTaskRef normalizes a full version pin to the corresponding major reference.
+func MajorTaskRef(ref string) string {
+	if m := pinnedTaskRe.FindStringSubmatch(ref); m != nil {
+		return m[1]
+	}
+	return ref
+}
 
 func (v *Validator) validateTask(n *yaml.Node) []Error {
 	if n.Kind != yaml.MappingNode {
@@ -108,6 +119,13 @@ func (v *Validator) validateTask(n *yaml.Node) []Error {
 		return errs
 	}
 	branch := v.FindTask(ref)
+	if branch == nil {
+		for _, known := range v.KnownTasks {
+			if strings.EqualFold(known, ref) {
+				return errs
+			}
+		}
+	}
 	if branch == nil && v.knownTaskName(ref) {
 		return errs
 	}

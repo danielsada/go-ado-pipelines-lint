@@ -45,7 +45,9 @@ type scalarVisit struct {
 	Node *yaml.Node
 	// Parent is the mapping that contains the scalar as a key or value (nil for sequence items).
 	Parent *yaml.Node
-	IsKey  bool
+	// Unit is the owning stage/job/step through conditional insertion mappings.
+	Unit  *yaml.Node
+	IsKey bool
 	// Path is the list of mapping keys from the root to the scalar (for keys, including the key itself).
 	Path []string
 }
@@ -68,27 +70,34 @@ func (v scalarVisit) under(key string) bool {
 }
 
 func walkScalars(n *yaml.Node, fn func(scalarVisit)) {
-	walkScalarsPath(n, nil, nil, fn)
+	walkScalarsPath(n, nil, nil, nil, fn)
 }
 
-func walkScalarsPath(n, parent *yaml.Node, path []string, fn func(scalarVisit)) {
+func walkScalarsPath(n, parent, unit *yaml.Node, path []string, fn func(scalarVisit)) {
 	n = yamlx.Deref(n)
 	if n == nil {
 		return
 	}
 	switch n.Kind {
 	case yaml.ScalarNode:
-		fn(scalarVisit{Node: n, Parent: parent, Path: path})
+		fn(scalarVisit{Node: n, Parent: parent, Unit: unit, Path: path})
 	case yaml.SequenceNode:
 		for _, c := range n.Content {
-			walkScalarsPath(c, nil, path, fn)
+			walkScalarsPath(c, nil, nil, path, fn)
 		}
 	case yaml.MappingNode:
+		if isUnit(n) {
+			unit = n
+		}
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			k := n.Content[i]
 			p := append(append([]string(nil), path...), k.Value)
-			fn(scalarVisit{Node: k, Parent: n, IsKey: true, Path: p})
-			walkScalarsPath(n.Content[i+1], n, p, fn)
+			fn(scalarVisit{Node: k, Parent: n, Unit: unit, IsKey: true, Path: p})
+			var owner *yaml.Node
+			if k.Value == "condition" || expr.IsDirective(k.Value) {
+				owner = unit
+			}
+			walkScalarsPath(n.Content[i+1], n, owner, p, fn)
 		}
 	}
 }
@@ -124,6 +133,22 @@ var scriptKeys = map[string]bool{"script": true, "bash": true, "pwsh": true, "po
 
 func isScriptValue(v scalarVisit) bool {
 	return !v.IsKey && scriptKeys[strings.ToLower(v.last())]
+}
+
+func isVariableValue(v scalarVisit) bool {
+	for i := len(v.Path) - 1; i >= 0; i-- {
+		if v.Path[i] != "variables" {
+			continue
+		}
+		var keys []string
+		for _, k := range v.Path[i+1:] {
+			if !expr.IsDirective(k) {
+				keys = append(keys, k)
+			}
+		}
+		return len(keys) == 1
+	}
+	return false
 }
 
 // unitKeys identify a mapping as a stage, job or step.

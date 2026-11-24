@@ -20,6 +20,12 @@ ignore: ["vendor/**"]
 templates:
   enabled: false
   repoRoot: ..
+  lintReferenced: true
+  ignoreRepositories: [Infra, Unmapped]
+repositories:
+  Infra: ../infra
+tasks:
+  known: [1ES.PublishPipelineArtifact@1, yarn-berry-auth@2]
 scripts:
   scriptShell: bash
   shellcheck:
@@ -38,6 +44,12 @@ scripts:
 	if c.RepoRoot() != filepath.Join("cfg", "..") {
 		t.Errorf("RepoRoot = %q", c.RepoRoot())
 	}
+	if c.RepositoryRoots()["infra"] != filepath.Clean(filepath.Join("cfg", "..", "infra")) || !c.Templates.LintReferenced || len(c.Tasks.Known) != 2 {
+		t.Errorf("unexpected template/task configuration: %+v", c)
+	}
+	if strings.Join(c.Templates.IgnoreRepositories, ",") != "Infra,Unmapped" {
+		t.Errorf("ignored repository aliases = %v", c.Templates.IgnoreRepositories)
+	}
 	if _, err := Parse(nil, ".adolint.yaml", known); err != nil {
 		t.Errorf("empty config: %v", err)
 	}
@@ -45,11 +57,20 @@ scripts:
 
 func TestParseErrors(t *testing.T) {
 	cases := map[string]string{
-		"rules:\n  FOO1: off\n":                       "unknown rule",
-		"rules:\n  ADO401: loud\n":                    "invalid severity",
-		"rulez: {}\n":                                 "field rulez not found",
-		"scripts:\n  scriptShell: zsh\n":              "scriptShell",
-		"scripts:\n  shellcheck:\n    profile: max\n": "profile",
+		"rules:\n  FOO1: off\n":                              "unknown rule",
+		"rules:\n  ADO401: loud\n":                           "invalid severity",
+		"rulez: {}\n":                                        "field rulez not found",
+		"scripts:\n  scriptShell: zsh\n":                     "scriptShell",
+		"scripts:\n  shellcheck:\n    profile: max\n":        "profile",
+		"repositories:\n  self: ../other\n":                  "repository alias",
+		"repositories:\n  Infra: a\n  infra: b\n":            "repository alias",
+		"repositories:\n  infra: ''\n":                       "checkout path",
+		"tasks:\n  known: [Custom]\n":                        "tasks.known",
+		"tasks:\n  known: [Custom@1.2]\n":                    "tasks.known",
+		"templates:\n  ignoreRepositories: ['']\n":           "ignoreRepositories",
+		"templates:\n  ignoreRepositories: [self]\n":         "ignoreRepositories",
+		"templates:\n  ignoreRepositories: [Infra, infra]\n": "ignoreRepositories",
+		"templates:\n  ignoreRepositories: ['repo/path']\n":  "ignoreRepositories",
 	}
 	for src, want := range cases {
 		if _, err := Parse([]byte(src), ".adolint.yaml", known); err == nil || !strings.Contains(err.Error(), want) {

@@ -7,6 +7,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/danielsada/go-ado-pipelines-lint/internal/expr"
 	"github.com/danielsada/go-ado-pipelines-lint/internal/lint"
 	"github.com/danielsada/go-ado-pipelines-lint/internal/model"
 	"github.com/danielsada/go-ado-pipelines-lint/internal/yamlx"
@@ -135,6 +136,38 @@ func (g *depGraph) add(name string, deps []model.Ref) {
 	g.order = append(g.order, k)
 }
 
+func (g *depGraph) mayContain(name string) bool {
+	if _, ok := g.names[strings.ToLower(name)]; ok {
+		return true
+	}
+	for _, pattern := range g.names {
+		if !hasDynamic(pattern) {
+			continue
+		}
+		var b strings.Builder
+		b.WriteString("(?i)^")
+		last := 0
+		spans, errs := expr.Scan(pattern)
+		if len(errs) > 0 {
+			return true
+		}
+		for _, sp := range spans {
+			if sp.Start < last {
+				continue
+			}
+			b.WriteString(regexp.QuoteMeta(pattern[last:sp.Start]))
+			b.WriteString(".*")
+			last = sp.End
+		}
+		b.WriteString(regexp.QuoteMeta(pattern[last:]))
+		b.WriteString("$")
+		if regexp.MustCompile(b.String()).MatchString(name) {
+			return true
+		}
+	}
+	return false
+}
+
 func checkUnknownDeps(c *lint.PipelineContext) { checkDependencies(c, false) }
 
 func checkCycles(c *lint.PipelineContext) { checkDependencies(c, true) }
@@ -162,7 +195,7 @@ func reportGraph(c *lint.PipelineContext, g *depGraph, kind string, open, cycles
 	}
 	for _, k := range g.order {
 		for _, d := range g.edges[k] {
-			if _, ok := g.names[strings.ToLower(d.Name)]; ok || open || hasDynamic(d.Name) {
+			if g.mayContain(d.Name) || open || hasDynamic(d.Name) {
 				continue
 			}
 			c.Report("ADO103", d.Node, fmt.Sprintf("%s %q depends on unknown %s %q", kind, g.names[k], kind, d.Name))

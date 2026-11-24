@@ -39,7 +39,7 @@ func collectExpressions(root *yaml.Node) []occurrence {
 				return
 			}
 		}
-		if !v.IsKey && v.last() == "condition" && v.Parent != nil && isUnit(v.Parent) && !expr.HasTemplate(s) && strings.TrimSpace(s) != "" {
+		if !v.IsKey && !isVariableValue(v) && v.last() == "condition" && v.Unit != nil && !expr.HasTemplate(s) && strings.TrimSpace(s) != "" {
 			ast, err := expr.Parse(s)
 			out = append(out, occurrence{visit: v, text: s, ast: ast, err: err, condition: true})
 			return
@@ -47,6 +47,44 @@ func collectExpressions(root *yaml.Node) []occurrence {
 		out = append(out, spanOccurrences(v)...)
 	})
 	return out
+}
+
+func runtimeParameterExpressions(root *yaml.Node) []occurrence {
+	var out []occurrence
+	walkScalars(root, func(v scalarVisit) {
+		if v.IsKey {
+			return
+		}
+		s := maskTemplateExpressions(v.Node.Value)
+		if !isVariableValue(v) && v.last() == "condition" && v.Unit != nil {
+			ast, err := expr.Parse(s)
+			out = append(out, occurrence{visit: v, ast: ast, err: err})
+		} else if isVariableValue(v) {
+			spans, _ := expr.Scan(s)
+			for _, sp := range spans {
+				if sp.Kind == expr.SpanRuntime {
+					ast, err := expr.Parse(sp.Expr)
+					out = append(out, occurrence{visit: v, off: sp.ExprStart, ast: ast, err: err})
+				}
+			}
+		}
+	})
+	return out
+}
+
+func maskTemplateExpressions(s string) string {
+	b := []byte(s)
+	spans, _ := expr.Scan(s)
+	for _, sp := range spans {
+		if sp.Kind != expr.SpanTemplate {
+			continue
+		}
+		for i := sp.Start; i < sp.End; i++ {
+			b[i] = ' '
+		}
+		copy(b[sp.Start:], "null")
+	}
+	return string(b)
 }
 
 func directiveOccurrence(v scalarVisit, d *expr.Directive, err error) occurrence {
@@ -69,7 +107,7 @@ func directiveOccurrence(v scalarVisit, d *expr.Directive, err error) occurrence
 }
 
 func spanOccurrences(v scalarVisit) []occurrence {
-	script := isScriptValue(v)
+	script := isScriptValue(v) && !isVariableValue(v)
 	spans, scanErrs := expr.Scan(v.Node.Value)
 	var out []occurrence
 	for _, se := range scanErrs {
@@ -234,13 +272,23 @@ func checkUnusedParams(c *lint.SourceContext) {
 	if !template.StrictParams(c.Params) {
 		return // map-form parameter bags are usually forwarded to other templates
 	}
-	use := parameterRefs(collectExpressions(c.Src.Root), nil)
+	occ := append(collectExpressions(c.Src.Root), runtimeParameterExpressions(c.Src.Root)...)
+	use := parameterRefs(occ, nil)
 	if use.whole {
 		return
 	}
+
 	for _, p := range c.Params {
 		if !use.names[strings.ToLower(p.Name)] {
 			c.Report("ADO207", p.NameNode, fmt.Sprintf("parameter %q is declared but never used", p.Name))
 		}
+	}
+}
+
+func checkRuntimeParams(c *lint.SourceContext) {
+	for _, o := range runtimeParameterExpressions(c.Src.Root) {
+		parameterRefs([]occurrence{o}, func(name string, _ occurrence, off int) {
+			c.ReportAt("ADO305", at(c, o.node(), off), fmt.Sprintf("parameters.%s is not available at runtime; use ${{ parameters.%s }}", name, name))
+		})
 	}
 }

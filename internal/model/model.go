@@ -17,7 +17,9 @@ type Pipeline struct {
 	Root *yaml.Node
 	// IsTemplate is true when the file was linted as a template rather than a pipeline.
 	IsTemplate bool
-	Stages     []*Stage
+	// IsExtendsTemplate selects the schema for a standalone extends template.
+	IsExtendsTemplate bool
+	Stages            []*Stage
 	// StagesNode is the stages sequence, or nil if stages are implicit.
 	StagesNode *yaml.Node
 	Pool       *Pool
@@ -275,6 +277,7 @@ func (s *Step) TaskRef() string {
 func (s *Step) TaskName() (name, version string) {
 	ref := s.TaskRef()
 	name, version, _ = strings.Cut(ref, "@")
+	version, _, _ = strings.Cut(version, ".")
 	return strings.ToLower(name), version
 }
 

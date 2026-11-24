@@ -1,0 +1,25 @@
+trigger: none
+parameters:
+- name: cloud
+  type: string
+  default: work
+stages:
+- stage: tests_${{ parameters.cloud }}
+  jobs:
+  - job: build_${{ parameters.cloud }}
+    steps:
+    - script: echo build
+  - job: report
+    dependsOn: build_work
+    steps:
+    - script: echo report
+  - job: invalid
+    dependsOn: missing_work # want: ADO103
+    steps:
+    - script: echo invalid
+- stage: report
+  dependsOn: tests_work
+  jobs: []
+- stage: invalid
+  dependsOn: missing_work # want: ADO103
+  jobs: []

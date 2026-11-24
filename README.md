@@ -106,14 +106,17 @@ Exit codes: `0` means no findings at or above `--fail-on`, `1` means findings, `
    - It binds parameters with type and `values` checks.
    - It evaluates `${{ }}` expressions and `if`/`elseif`/`else`/`each`/`insert` directives.
    - Local paths are resolved relative to the including file, or to the repository root for paths starting with `/`.
-   - It applies the documented limits of 100 files and 100 nesting levels, and detects include cycles.
-   - Templates from other repositories (`path@alias`) are not fetched; enable ADO202 to list them. Stages, jobs and steps passed as parameters to such an `extends` template are still linted.
+   - It applies the documented limits of 100 files and 100 nesting levels, and detects include cycles. Each expansion also has local safety budgets of 100,000 node operations and 16 MiB of generated or evaluated scalar text; exceeding either aborts that entry's expansion with ADO208.
+   - Templates from other repositories (`path@alias`) are expanded when `repositories` maps the alias to a local checkout. Nothing is fetched; enable ADO202 to list unresolved references. Stages, jobs and steps passed as parameters to an unresolved `extends` template are still linted.
    - `path@self` references are resolved relative to the including file, then from the repository root.
    - Templates that declare parameters in the legacy mapping form, or not at all, accept any parameter.
+   - Set `templates.lintReferenced: true` to also lint referenced templates independently with unknown parameters, covering branches no caller enables. Duplicate findings are removed.
+   - Files under `steps`, `jobs`, `stages`, `phases` or template-named directories are treated as templates when they have a single template body and no pipeline-only keys.
 3. **Unknown values stay unknown**:
    - Pipeline parameters of type `string`, `number` and `boolean` can change at queue time, so they are treated as unknown. Other parameters use their defaults.
    - When a condition can't be decided, every branch is expanded and marked conditional, so the whole pipeline is linted without false duplicate-name errors.
-4. **Schema validation** runs on the expanded document using the embedded `service-schema.json` (ADO003 to ADO007). It also checks built-in task names, versions and inputs (ADO501 to ADO503).
+   - Alternative values for conditional mapping keys are checked in separate views, including nested branches. Independent choices are varied individually, not as an exhaustive Cartesian product.
+4. **Schema validation** runs on the expanded document using the embedded `service-schema.json` (ADO003 to ADO007). It also checks built-in task names, versions and inputs (ADO501 to ADO503). Full task version pins such as `npmAuthenticate@0.208.1` use the major version's schema; custom tasks can be declared in `tasks.known`.
 5. **Rules** run on both the original files (expressions, conditions, parameters) and the expanded pipeline (structure, dependencies, best practices). Every diagnostic is reported at its original file and position.
 
 ### Expressions
@@ -138,7 +141,7 @@ adolint lints these inline scripts after template expansion:
 
 Before a script is linted, Azure Pipelines syntax is replaced with **same-length placeholders** so every column stays put:
 
-- `${{ ... }}` and `$(Macro.Name)` macros become underscores. In PowerShell expression positions, such as `.AddDays(${{ parameters.days }})`, the placeholder starts with `$` so it parses as a variable.
+- `${{ ... }}` and `$(Macro.Name)` macros become underscores. In PowerShell expression positions, such as `.AddDays(${{ parameters.days }})` or `[int]${{ parameters.x }}`, the placeholder starts with `$` so it parses as a variable.
 - A bare `$(name)` is treated as a macro unless it is a common command such as `$(pwd)` or `$(date)`, because variables also come from variable groups and the pipeline UI. Command substitutions with arguments, like `$(git rev-parse HEAD)`, are left alone.
 
 Findings are reported as `ADO701/SCxxxx` or `ADO702/RuleName` at the exact YAML line and column. ShellCheck severities are kept. For PSScriptAnalyzer, parse errors are errors, other Error and Warning findings are warnings, and Information findings are info. A severity configured for the rule overrides these. Run `adolint extract` to see exactly what is linted.
@@ -165,6 +168,12 @@ ignore:                # globs relative to this file; ** matches any depth
 templates:
   enabled: true
   repoRoot: .          # root for template paths starting with "/"
+  lintReferenced: false # opt in to checking branches no caller enables
+  ignoreRepositories: [] # aliases to skip, e.g. [OneBranch, External]
+repositories:          # local checkouts, relative to this config file
+  Infra: ../Infra
+tasks:
+  known: [1ES.PublishPipelineArtifact@1, yarn-berry-auth@2]
 scripts:
   enabled: true
   scriptShell: auto    # how to treat `script:` steps: auto | bash | skip
@@ -177,6 +186,10 @@ scripts:
 ```
 
 Precedence is: built-in defaults, then the config file, then `--enable`/`--disable`.
+
+Repository aliases are case-insensitive. `path@Infra` is relative to that checkout's root; nested unqualified paths are relative to the including template, and `/path` uses its checkout root. `path@self` refers back to the original repository. Missing mapped files use ADO201; unmapped aliases use ADO202 (both off by default). Keep each checkout at the revision your pipeline uses. Custom task references in `tasks.known` match case-insensitively and exactly, including their version; their inputs are not validated.
+
+Use `templates.ignoreRepositories: [OneBranch, External]` to skip references to those aliases without ADO202 notices, even when enabled. Matching is case-insensitive and takes precedence over checkout mappings. Files scanned directly and caller-owned content passed to ignored `extends` templates are still linted.
 
 ### Inline suppressions
 
@@ -218,11 +231,12 @@ Each rule has a page with details, examples and configuration at `https://daniel
 | [ADO205](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO205/) | `parameter-value-invalid` | error | A parameter value doesn't match the declared type or allowed values. |
 | [ADO206](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO206/) | `undeclared-parameter-reference` | warning | An expression references a parameter the file doesn't declare. |
 | [ADO207](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO207/) | `unused-parameter` | info | A declared parameter is never used. |
-| [ADO208](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO208/) | `template-limits` | error | Template includes form a cycle or exceed documented limits. |
+| [ADO208](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO208/) | `template-limits` | error | Template includes form a cycle or exceed expansion limits. |
 | [ADO301](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO301/) | `expression-syntax` | error | An expression or template directive is malformed. |
 | [ADO302](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO302/) | `invalid-function` | error | An unknown function is called, or a function has the wrong number of arguments. |
 | [ADO303](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO303/) | `runtime-expression-partial` | warning | A runtime expression $[ ] is mixed with other text. |
 | [ADO304](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO304/) | `template-expression-unsupported-location` | warning | ${{ }} is used where template expressions aren't expanded. |
+| [ADO305](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO305/) | `runtime-parameter-reference` | warning | A runtime expression references compile-time parameters. |
 | [ADO401](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO401/) | `implicit-ci-trigger` | warning | No trigger is defined, so CI runs for every branch. |
 | [ADO402](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO402/) | `implicit-pr-trigger` | info (off by default) | No pr trigger is defined, so PR validation runs for every branch. |
 | [ADO403](https://danielsada.github.io/go-ado-pipelines-lint/rules/ADO403/) | `hardcoded-secret` | warning | A secret-looking variable has a literal value. |

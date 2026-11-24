@@ -58,8 +58,10 @@ type Validator struct {
 	// match no known shape are not reported: they are often deliberate error traps such as
 	// - 'Unsupported configuration': error
 	Conditional func(*yaml.Node) bool
-	taskDef     *Schema
-	taskCache   map[string]*Schema
+	// KnownTasks lists custom references whose inputs are not validated.
+	KnownTasks []string
+	taskDef    *Schema
+	taskCache  map[string]*Schema
 }
 
 // NewValidator creates a validator for the embedded schema.

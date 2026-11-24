@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -48,14 +49,16 @@ type Engine struct {
 	opts      Options
 	loader    *template.Loader
 	validator *schema.Validator
+	extends   map[string]bool
 }
 
 // Entry is a file linted as an entry point (a pipeline, or a stand-alone template).
 type Entry struct {
-	Src        *yamlx.Source
-	IsTemplate bool
-	Result     *template.Result
-	Model      *model.Pipeline
+	Src               *yamlx.Source
+	IsTemplate        bool
+	IsExtendsTemplate bool
+	Result            *template.Result
+	Model             *model.Pipeline
 }
 
 // New creates an engine.
@@ -76,12 +79,14 @@ func New(opts Options) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
+	v.KnownTasks = opts.Config.Tasks.Known
 	return &Engine{opts: opts, loader: template.NewLoader(opts.ReadFile, opts.Display), validator: v}, nil
 }
 
 // Load parses inputs and decides which are entry points. Files referenced as templates by
 // other inputs are not entry points; template-shaped files are linted as templates.
 func (e *Engine) Load(inputs []Input) (entries []*Entry, sources []*yamlx.Source, err error) {
+	e.extends = map[string]bool{}
 	for _, in := range inputs {
 		data, err := e.opts.ReadFile(in.Abs)
 		if err != nil {
@@ -94,9 +99,10 @@ func (e *Engine) Load(inputs []Input) (entries []*Entry, sources []*yamlx.Source
 	referenced := map[string]bool{}
 	for _, src := range sources {
 		for _, ref := range e.templateRefs(src) {
-			if ref != src.Abs {
-				referenced[ref] = true
+			if ref.path != src.Abs {
+				referenced[ref.path] = true
 			}
+			e.extends[ref.path] = e.extends[ref.path] || ref.extends
 		}
 	}
 	for _, src := range sources {
@@ -110,14 +116,42 @@ func (e *Engine) Load(inputs []Input) (entries []*Entry, sources []*yamlx.Source
 
 // Expand expands an entry and builds its model.
 func (e *Engine) Expand(en *Entry) {
-	opts := template.Options{RepoRoot: e.opts.RepoRoot, Loader: e.loader, NoTemplates: e.opts.NoTemplates}
+	opts := e.templateOptions(en.Src)
 	if en.IsTemplate {
 		en.Result = template.ExpandTemplate(en.Src, opts)
 	} else {
 		en.Result = template.ExpandPipeline(en.Src, opts)
 	}
-	en.Model = model.Build(en.Result.Doc, en.IsTemplate)
-	en.Model.Partial = en.IsTemplate
+	en.Model = en.buildModel(en.Result.Doc)
+}
+
+func (e *Engine) templateOptions(src *yamlx.Source) template.Options {
+	return template.Options{
+		RepoRoot: e.opts.RepoRoot, SourceRoot: e.sourceRoot(src),
+		Repositories: e.opts.Config.RepositoryRoots(), IgnoreRepositories: e.opts.Config.Templates.IgnoreRepositories,
+		Loader: e.loader, NoTemplates: e.opts.NoTemplates,
+	}
+}
+
+func (en *Entry) buildModel(doc *yamlx.Doc) *model.Pipeline {
+	m := model.Build(doc, en.IsTemplate)
+	m.Partial, m.IsExtendsTemplate = en.IsTemplate, en.IsExtendsTemplate
+	return m
+}
+
+// Pipelines returns the expanded model and its conditional mapping alternatives,
+// including pipeline-shaped parameters passed to unresolved extends templates.
+func (en *Entry) Pipelines() []*model.Pipeline {
+	out := append([]*model.Pipeline{en.Model}, ExtendsParameterPipelines(en)...)
+	for _, doc := range en.Result.Alternatives {
+		m := en.buildModel(doc)
+		m.PoolUnknown = en.Model.PoolUnknown
+		view := *en
+		view.Model, view.Result = m, &template.Result{Doc: doc}
+		out = append(out, m)
+		out = append(out, ExtendsParameterPipelines(&view)...)
+	}
+	return out
 }
 
 // Validator returns the schema validator.
@@ -141,13 +175,37 @@ func (e *Engine) Lint(ctx context.Context, inputs []Input) ([]diag.Diagnostic, e
 	}
 	templates := map[*yamlx.Source]bool{}
 	extractor := scripts.NewExtractor(scripts.Options{ScriptShell: e.opts.Config.Scripts.ScriptShell})
+	fallback := scripts.NewExtractor(scripts.Options{ScriptShell: e.opts.Config.Scripts.ScriptShell})
+	queued := map[*yamlx.Source]*Entry{}
 	for _, en := range entries {
+		queued[en.Src] = en
+	}
+	primaryCount := len(entries)
+	if e.opts.Config.Templates.LintReferenced {
+		for _, src := range inputSources {
+			if queued[src] == nil {
+				en := &Entry{Src: src, IsTemplate: true, IsExtendsTemplate: e.extends[src.Abs]}
+				entries = append(entries, en)
+				queued[src] = en
+			}
+		}
+	}
+	for i := 0; i < len(entries); i++ {
+		en := entries[i]
 		e.Expand(en)
+		standalone := i >= primaryCount
+		if standalone {
+			en.Model.PoolUnknown = true
+		}
 		diags = append(diags, en.Result.Diags...)
-		for _, m := range append([]*model.Pipeline{en.Model}, ExtendsParameterPipelines(en)...) {
+		for _, m := range en.Pipelines() {
 			e.checkPipeline(&PipelineContext{Pipeline: m, Doc: m.Doc, Schema: e.validator, rep: rep})
 			if e.scriptsEnabled() {
-				extractor.Add(m)
+				if standalone {
+					fallback.Add(m)
+				} else {
+					extractor.Add(m)
+				}
 			}
 		}
 		for i, s := range en.Result.Doc.Sources {
@@ -155,6 +213,17 @@ func (e *Engine) Lint(ctx context.Context, inputs []Input) ([]diag.Diagnostic, e
 				templates[s] = true
 			}
 			addSrc(s)
+			if en.Result.ExtendsSources[s] {
+				e.extends[s.Abs] = true
+				if q := queued[s]; q != nil {
+					q.IsExtendsTemplate = true
+				}
+			}
+			if e.opts.Config.Templates.LintReferenced && queued[s] == nil {
+				next := &Entry{Src: s, IsTemplate: true, IsExtendsTemplate: e.extends[s.Abs]}
+				entries = append(entries, next)
+				queued[s] = next
+			}
 		}
 	}
 	for _, s := range inputSources {
@@ -172,7 +241,7 @@ func (e *Engine) Lint(ctx context.Context, inputs []Input) ([]diag.Diagnostic, e
 		}
 	}
 	var toolErr error
-	if found := extractor.Scripts(); e.scriptsEnabled() && len(found) > 0 {
+	if found := mergeScripts(extractor.Scripts(), fallback.Scripts()); e.scriptsEnabled() && len(found) > 0 {
 		sd, err := scripts.Lint(ctx, e.opts.Runner, found, scripts.LintOptions{
 			ShellCheck: e.opts.Config.Scripts.ShellCheck, PSScriptAnalyzer: e.opts.Config.Scripts.PSScriptAnalyzer,
 			Require: e.opts.RequireScriptLinters})
@@ -182,6 +251,25 @@ func (e *Engine) Lint(ctx context.Context, inputs []Input) ([]diag.Diagnostic, e
 		}
 	}
 	return e.finalize(diags, all), toolErr
+}
+
+func mergeScripts(primary, fallback []*scripts.Script) []*scripts.Script {
+	type key struct {
+		file         string
+		line, column int
+		lang         scripts.Lang
+	}
+	seen := map[key]bool{}
+	var out []*scripts.Script
+	for _, s := range append(primary, fallback...) {
+		k := key{s.File, s.Line, s.Column, s.Lang}
+		if !seen[k] {
+			seen[k] = true
+			s.ID = len(out)
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func (e *Engine) scriptsEnabled() bool {
@@ -223,6 +311,9 @@ func (e *Engine) checkSchema(c *PipelineContext) {
 func SchemaDef(p *model.Pipeline) string {
 	if !p.IsTemplate {
 		return "pipeline"
+	}
+	if p.IsExtendsTemplate {
+		return "extendsTemplate"
 	}
 	for _, k := range []string{"stages", "jobs", "steps", "variables"} {
 		if yamlx.Has(p.Root, k) {
@@ -322,60 +413,89 @@ func (e *Engine) ignored(abs string) bool {
 	return e.opts.Config.Ignored(rel)
 }
 
-// templateRefs returns the absolute paths of local YAML files that src may reference as templates:
-// template: values, and any other scalar naming a .yml/.yaml file (templates are often passed
-// around as parameters, e.g. jobTemplate: /eng/pipelines/build-job.yml).
-func (e *Engine) templateRefs(src *yamlx.Source) []string {
-	var out []string
-	var walk func(n *yaml.Node)
-	walk = func(n *yaml.Node) {
+type templateReference struct {
+	path    string
+	extends bool
+}
+
+// templateRefs considers includes and filenames passed as parameters, not unrelated
+// scalars such as trigger path filters.
+func (e *Engine) templateRefs(src *yamlx.Source) []templateReference {
+	var out []templateReference
+	var walk func(n *yaml.Node, parameters, extends bool)
+	walk = func(n *yaml.Node, parameters, extends bool) {
 		n = yamlx.Deref(n)
 		if n == nil {
 			return
 		}
-		if n.Kind == yaml.ScalarNode {
-			out = append(out, e.refCandidates(src, n.Value)...)
+		if n.Kind == yaml.ScalarNode && parameters {
+			for _, path := range e.refCandidates(src, n.Value) {
+				out = append(out, templateReference{path: path})
+			}
+			return
+		}
+		if yamlx.IsMap(n) {
+			yamlx.Pairs(n, func(k, v *yaml.Node) {
+				if k.Value == "template" {
+					for _, path := range e.refCandidates(src, v.Value) {
+						out = append(out, templateReference{path: path, extends: extends})
+					}
+				} else {
+					walk(v, parameters || k.Value == "parameters", k.Value == "extends")
+				}
+			})
 			return
 		}
 		for _, c := range n.Content {
-			walk(c)
+			walk(c, parameters, false)
 		}
 	}
-	walk(src.Root)
+	walk(src.Root, false, false)
 	return out
 }
 
 func (e *Engine) refCandidates(src *yamlx.Source, v string) []string {
 	v = strings.TrimSpace(v)
 	p, alias := template.SplitRef(v)
+	if alias != "" && slices.ContainsFunc(e.opts.Config.Templates.IgnoreRepositories, func(ignored string) bool { return strings.EqualFold(alias, ignored) }) {
+		return nil
+	}
 	lp := strings.ToLower(p)
 	if expr.HasDynamic(v) || strings.ContainsAny(p, " \n") || (!strings.HasSuffix(lp, ".yml") && !strings.HasSuffix(lp, ".yaml")) {
 		return nil
 	}
 	if alias != "" && !strings.EqualFold(alias, "self") {
-		return nil
+		if e.opts.Config.RepositoryRoots()[strings.ToLower(alias)] == "" {
+			return nil
+		}
 	}
-	out := []string{e.resolve(src, p)}
-	if e.opts.RepoRoot != "" {
-		out = append(out, filepath.Join(e.opts.RepoRoot, filepath.FromSlash(p)))
-	}
-	return out
+	return []string{e.templateOptions(src).ResolvePath(p, alias, src)}
 }
 
-func (e *Engine) resolve(src *yamlx.Source, p string) string {
-	p = filepath.FromSlash(p)
-	if strings.HasPrefix(p, string(filepath.Separator)) {
-		return filepath.Join(e.opts.RepoRoot, p)
+func (e *Engine) sourceRoot(src *yamlx.Source) string {
+	root := e.opts.RepoRoot
+	matched := 0
+	roots := e.opts.Config.RepositoryRoots()
+	roots["self"] = e.opts.RepoRoot
+	for _, candidate := range roots {
+		if candidate == "" {
+			continue
+		}
+		rel, err := filepath.Rel(candidate, src.Abs)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && len(candidate) > matched {
+			root, matched = candidate, len(candidate)
+		}
 	}
-	return filepath.Join(filepath.Dir(src.Abs), p)
+	return root
 }
 
 var pipelineOnlyKeys = []string{"trigger", "pr", "schedules", "resources", "pool", "name", "extends",
-	"lockBehavior", "appendCommitMessageToRunName"}
+	"lockBehavior", "appendCommitMessageToRunName", "strategy", "container", "services", "workspace",
+	"continueOnError", "queue", "server", "phases"}
 
 // LooksLikeTemplate reports whether a file looks like a template rather than a pipeline. It must have
 // one of stages/jobs/steps (or only variables) and no pipeline-only keys such as trigger or pool, and
-// additionally declare parameters, use parameters, or live under a directory named like "templates".
+// additionally declare parameters, use parameters, or live under a template-shaped directory.
 func LooksLikeTemplate(src *yamlx.Source) bool {
 	root := src.Root
 	if !yamlx.IsMap(root) {
@@ -405,7 +525,8 @@ func usesParameters(src *yamlx.Source) bool {
 
 func inTemplateDir(src *yamlx.Source) bool {
 	for _, part := range strings.Split(filepath.ToSlash(filepath.Dir(src.Path)), "/") {
-		if strings.Contains(strings.ToLower(part), "template") {
+		part = strings.ToLower(part)
+		if strings.Contains(part, "template") || part == "steps" || part == "jobs" || part == "stages" || part == "phases" {
 			return true
 		}
 	}

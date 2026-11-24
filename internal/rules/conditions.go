@@ -91,6 +91,14 @@ func checkAlwaysRuns(c *lint.SourceContext) {
 			return !found
 		})
 		if found {
+			ctx := expr.NewContext()
+			ctx.Status = map[string]expr.Value{
+				"always": expr.Bool(true), "canceled": expr.Bool(true),
+				"succeeded": expr.Bool(false), "succeededorfailed": expr.Bool(false),
+			}
+			if b, known := expr.Eval(ast, ctx).Truthy(); known && !b {
+				return
+			}
 			c.Report("ADO604", cond, fmt.Sprintf("always() also runs the %s when the run is canceled; use succeededOrFailed() or not(canceled()) unless that is intended", unitKind(unit)))
 		}
 	})
@@ -214,7 +222,13 @@ func checkConstantTemplateIf(c *lint.SourceContext) {
 			if !ok {
 				continue
 			}
-			c.Report("ADO602", k, templateIfMessage(d, b, names, followedByBranch(keys[i+1:])))
+			msg := templateIfMessage(d, b, names, followedByBranch(keys[i+1:]))
+			for _, name := range names {
+				if p := template.FindParam(c.Params, name); p != nil && len(p.Values) == 1 {
+					msg += fmt.Sprintf("; parameter %q allows only one value", name)
+				}
+			}
+			c.Report("ADO602", k, msg)
 		}
 	})
 }
@@ -329,13 +343,24 @@ func checkDependencyDeclared(c *lint.PipelineContext) {
 	if c.Pipeline.Partial {
 		return // dependsOn lists and dependencies may come from the including pipeline
 	}
+	stages := newGraph()
+	for _, s := range c.Pipeline.Stages {
+		if !s.Implicit {
+			stages.add(s.Name, nil)
+		}
+	}
+	stagesOpen := c.Doc.Open(c.Pipeline.StagesNode)
 	for _, s := range c.Pipeline.Stages {
 		if !s.Implicit {
 			sd := stageDeps(s)
 			for _, re := range runtimeExprs(s.Condition, s.Variables) {
 				deps, sdeps := dependencyRefs(re.ast)
-				reportMissingDeps(c, re.node, append(deps, sdeps...), sd, "stage", s.Name)
+				reportMissingDeps(c, re.node, append(deps, sdeps...), sd, stages, stagesOpen, "stage", s.Name)
 			}
+		}
+		jobs := newGraph()
+		for _, j := range s.Jobs {
+			jobs.add(j.Name, nil)
 		}
 		for _, j := range s.Jobs {
 			if j.Implicit {
@@ -344,23 +369,39 @@ func checkDependencyDeclared(c *lint.PipelineContext) {
 			jd := nameSet(j.DependsOn)
 			for _, re := range runtimeExprs(j.Condition, j.Variables) {
 				deps, sdeps := dependencyRefs(re.ast)
-				reportMissingDeps(c, re.node, deps, jd, "job", j.Name)
+				reportMissingDeps(c, re.node, deps, jd, jobs, c.Doc.Open(s.JobsNode), "job", j.Name)
 				if !s.Implicit {
-					reportMissingDeps(c, re.node, sdeps, stageDeps(s), "stage", s.Name)
+					reportMissingDeps(c, re.node, sdeps, stageDeps(s), stages, stagesOpen, "stage", s.Name)
 				}
 			}
 		}
 	}
 }
 
-func reportMissingDeps(c *lint.PipelineContext, at *yaml.Node, refs []string, declared map[string]bool, kind, name string) {
+func reportMissingDeps(c *lint.PipelineContext, at *yaml.Node, refs []string, declared map[string]bool, available *depGraph, open bool, kind, name string) {
 	seen := map[string]bool{}
+	declaredNames := newGraph()
+	for dependency := range declared {
+		declaredNames.add(dependency, nil)
+	}
 	for _, r := range refs {
 		lr := strings.ToLower(r)
-		if declared[lr] || seen[lr] || hasDynamic(r) || hasDynamic(name) || c.Doc.Conditional(at) {
+		if seen[lr] || hasDynamic(r) || hasDynamic(name) || c.Doc.Conditional(at) {
 			continue
 		}
 		seen[lr] = true
+		if !available.mayContain(r) {
+			if !open {
+				c.Report("ADO605", at, fmt.Sprintf("references %s %q, which does not exist in this %s; the expression evaluates to null", kind, r, map[string]string{"stage": "pipeline", "job": "stage"}[kind]))
+			}
+			continue
+		}
+		if declaredNames.mayContain(r) {
+			continue
+		}
+		if _, known := available.names[lr]; !known {
+			continue
+		}
 		c.Report("ADO605", at, fmt.Sprintf("references dependencies of %q, but %s %q does not depend on it; add %s to dependsOn", r, kind, name, r))
 	}
 }

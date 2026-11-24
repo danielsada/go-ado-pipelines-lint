@@ -53,6 +53,10 @@ stages:
 		{"bad step", "steps:\n- displayName: nothing\n", []string{"ADO005:task, script"}},
 		{"unknown task", "steps:\n- task: NotARealTask@1\n", []string{"ADO501:not a built-in task"}},
 		{"unknown task version", "steps:\n- task: PowerShell@9\n", []string{"ADO501:known versions: 1, 2"}},
+		{"full task version", "steps:\n- task: npmAuthenticate@0.208.1\n  inputs:\n    workingFile: .npmrc\n", nil},
+		{"full task input validation", "steps:\n- task: Bash@3.250.1\n  inputs:\n    scrpt: echo\n", []string{`ADO502:did you mean "script"`}},
+		{"invalid full task version", "steps:\n- task: Bash@9.1.1\n", []string{"ADO501:known versions"}},
+		{"partial task version", "steps:\n- task: Bash@3.1\n", []string{"ADO501:known versions"}},
 		{"unknown input", "steps:\n- task: Bash@3\n  inputs:\n    targetType: inline\n    scrpt: echo\n", []string{`ADO502:did you mean "script"`}},
 		{"missing input", "steps:\n- task: AzureCLI@2\n  inputs:\n    scriptType: bash\n", []string{`ADO503:"azureSubscription"`}},
 		{"input alias", "steps:\n- task: AzureCLI@2\n  inputs:\n    connectedServiceNameARM: x\n    scriptType: bash\n    scriptLocation: inlineScript\n    inlineScript: echo\n", nil},
@@ -76,6 +80,30 @@ stages:
 				}
 			}
 		})
+	}
+}
+
+func TestConfiguredTasks(t *testing.T) {
+	v, err := NewValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.KnownTasks = []string{"1ES.PublishPipelineArtifact@1", "yarn-berry-auth@2", "Bash@3"}
+	s, _ := yamlx.Parse("t.yml", "", []byte(`steps:
+- task: 1es.PublishPipelineArtifact@1
+  inputs:
+    custom: anything
+- task: yarn-berry-auth@2
+- task: yarn-berry-auth@3
+- task: Bash@3
+  inputs:
+    scrpt: echo
+- task: 1ES.PublishPipelineArtifact@1
+  bogus: true
+`))
+	errs := v.Validate(s.Root, "pipeline")
+	if len(errs) != 3 || !hasErr(errs, "ADO501", "yarn-berry-auth@3") || !hasErr(errs, "ADO502", "scrpt") || !hasErr(errs, "ADO003", "bogus") {
+		t.Errorf("configured task validation: %v", msgs(errs))
 	}
 }
 
