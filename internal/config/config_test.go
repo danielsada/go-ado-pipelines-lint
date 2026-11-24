@@ -55,6 +55,15 @@ scripts:
 	}
 }
 
+func TestLimitExpansion(t *testing.T) {
+	for src, want := range map[string]ExpansionLimit{"": 0, "false": 0, "true": DefaultExpansionLimit, "0": 0, "500000": 500000} {
+		c, err := Parse([]byte("templates:\n  limitExpansion: "+src+"\n"), ".adolint.yaml", known)
+		if err != nil || c.Templates.LimitExpansion != want {
+			t.Errorf("limitExpansion %q = %d, %v; want %d", src, c.Templates.LimitExpansion, err, want)
+		}
+	}
+}
+
 func TestParseErrors(t *testing.T) {
 	cases := map[string]string{
 		"rules:\n  FOO1: off\n":                              "unknown rule",
@@ -71,6 +80,8 @@ func TestParseErrors(t *testing.T) {
 		"templates:\n  ignoreRepositories: [self]\n":         "ignoreRepositories",
 		"templates:\n  ignoreRepositories: [Infra, infra]\n": "ignoreRepositories",
 		"templates:\n  ignoreRepositories: ['repo/path']\n":  "ignoreRepositories",
+		"templates:\n  limitExpansion: -1\n":                 "limitExpansion",
+		"templates:\n  limitExpansion: lots\n":               "limitExpansion",
 	}
 	for src, want := range cases {
 		if _, err := Parse([]byte(src), ".adolint.yaml", known); err == nil || !strings.Contains(err.Error(), want) {

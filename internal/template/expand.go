@@ -27,11 +27,19 @@ const (
 	MaxDepth = 100
 )
 
-// MaxExpansionWork bounds node creation and alternative traversal per expansion.
-const MaxExpansionWork = 100000
+// DefaultWorkLimit is the opt-in node-operation budget used when no custom value is given.
+const DefaultWorkLimit = 100000
 
-// MaxExpansionBytes bounds scalar text copied or produced during expansion.
-const MaxExpansionBytes = 16 << 20
+// textBytesPerWork scales the scalar text budget with the work budget (16 MiB per 100,000 operations).
+const textBytesPerWork = float64(16<<20) / DefaultWorkLimit
+
+// TextLimit returns the scalar text budget that accompanies a node-operation budget.
+func TextLimit(workLimit int) int {
+	if workLimit <= 0 {
+		return 0
+	}
+	return int(float64(workLimit) * textBytesPerWork)
+}
 
 // Options configures expansion.
 type Options struct {
@@ -47,6 +55,12 @@ type Options struct {
 	Loader *Loader
 	// NoTemplates disables template file resolution (directives are still evaluated).
 	NoTemplates bool
+	// WorkLimit optionally bounds node creation and alternative traversal per expansion (0: no limit).
+	// Once exceeded, an ADO208 info is reported and no further templates, loops or conditional
+	// alternatives are expanded; the partially expanded document is still returned.
+	WorkLimit int
+	// TextLimit optionally bounds scalar text copied or produced during expansion (0: no limit).
+	TextLimit int
 }
 
 // Result is the output of expansion.
@@ -70,11 +84,10 @@ type expander struct {
 	remote         map[string]bool
 	work           int
 	textBytes      int
+	exhausted      bool
 	choices        map[*yaml.Node][]*mappingChoice
 	extendsSources map[*yamlx.Source]bool
 }
-
-type expansionLimit struct{}
 
 type frame struct {
 	src      *yamlx.Source
@@ -113,19 +126,11 @@ func ExpandTemplate(src *yamlx.Source, opts Options) *Result {
 	return expand(src, opts, false)
 }
 
-func expand(src *yamlx.Source, opts Options, pipeline bool) (res *Result) {
+func expand(src *yamlx.Source, opts Options, pipeline bool) *Result {
 	e := &expander{opts: opts, doc: yamlx.NewDoc(src), files: map[string]bool{}, remote: map[string]bool{},
 		choices: map[*yaml.Node][]*mappingChoice{}, extendsSources: map[*yamlx.Source]bool{}}
-	res = &Result{Doc: e.doc, ExtendsSources: e.extendsSources}
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			if _, ok := recovered.(expansionLimit); !ok {
-				panic(recovered)
-			}
-			res.Doc.Root, res.Alternatives = nil, nil
-		}
-		res.Diags = e.diags
-	}()
+	res := &Result{Doc: e.doc, ExtendsSources: e.extendsSources}
+	defer func() { res.Diags = e.diags }()
 	if src.Root == nil {
 		return res
 	}
@@ -167,20 +172,26 @@ func (e *expander) consume(pos *yaml.Node, f *frame) {
 }
 
 func (e *expander) consumeWork(amount int, pos *yaml.Node, f *frame) {
-	if amount > MaxExpansionWork-e.work {
-		e.emit(RuleLimits, diag.Error, e.at(pos, f), fmt.Sprintf("template expansion exceeds the work limit of %d node operations", MaxExpansionWork))
-		// Abort every enclosing loop, not just the current recursive include.
-		panic(expansionLimit{})
+	if limit := e.opts.WorkLimit; limit > 0 && !e.exhausted && amount > limit-e.work {
+		e.exhaust(pos, f, fmt.Sprintf("work limit of %d node operations", limit))
 	}
 	e.work += amount
 }
 
 func (e *expander) consumeText(value string, pos *yaml.Node, f *frame) {
-	if len(value) > MaxExpansionBytes-e.textBytes {
-		e.emit(RuleLimits, diag.Error, e.at(pos, f), fmt.Sprintf("template expansion exceeds the text limit of %d bytes", MaxExpansionBytes))
-		panic(expansionLimit{})
+	if limit := e.opts.TextLimit; limit > 0 && !e.exhausted && len(value) > limit-e.textBytes {
+		e.exhaust(pos, f, fmt.Sprintf("text limit of %d bytes", limit))
 	}
 	e.textBytes += len(value)
+}
+
+// exhaust stops further template, loop and alternative expansion. The budget describes adolint's
+// own limit rather than a pipeline problem, so it is reported as info and the partial document
+// expanded so far is still linted.
+func (e *expander) exhaust(pos *yaml.Node, f *frame, limit string) {
+	e.exhausted = true
+	e.emit(RuleLimits, diag.Info, e.at(pos, f), "template expansion exceeds the opt-in "+limit+
+		"; remaining templates, loops and conditional alternatives in this entry are not expanded")
 }
 
 func (e *expander) rootParams(ps []*Param, f *frame) expr.Value {
@@ -497,6 +508,10 @@ func (e *expander) insert(out, v *yaml.Node, f *frame, key string) {
 // collection is unknown, body is called once with an unknown loop variable and open (the
 // collection being built, if any) is marked open.
 func (e *expander) each(d *expr.Directive, ok bool, f *frame, open *yaml.Node, body func(*frame)) {
+	if e.exhausted {
+		e.markOpen(open)
+		return
+	}
 	coll := expr.Unknown()
 	if ok {
 		coll = expr.Eval(d.Coll, f.ctx)
@@ -511,13 +526,27 @@ func (e *expander) each(d *expr.Directive, ok bool, f *frame, open *yaml.Node, b
 		}
 	case expr.KArray:
 		for _, it := range coll.Arr {
+			if e.exhausted {
+				e.markOpen(open)
+				return
+			}
 			body(f.with(d.Var, it).conditional(e.isConditional(it)))
 		}
 	case expr.KObject:
 		for _, kv := range coll.Obj {
+			if e.exhausted {
+				e.markOpen(open)
+				return
+			}
 			item := expr.Value{Kind: expr.KObject, Obj: []expr.KV{{Key: "key", Val: expr.Str(kv.Key)}, {Key: "value", Val: kv.Val}}}
 			body(f.with(d.Var, item).conditional(e.isConditional(kv.Val)))
 		}
+	}
+}
+
+func (e *expander) markOpen(n *yaml.Node) {
+	if n != nil {
+		e.doc.MarkOpen(n)
 	}
 }
 
@@ -566,6 +595,8 @@ func (e *expander) seqDirective(out *yaml.Node, d *expr.Directive, ok bool, body
 			e.each(d, ok, f, item, func(lf *frame) { e.mergeBody(item, body, lf, key, &scalarRes) })
 			if len(item.Content) > 0 {
 				out.Content = append(out.Content, item)
+			} else if e.doc.Open(item) {
+				e.doc.MarkOpen(out)
 			}
 			return
 		}

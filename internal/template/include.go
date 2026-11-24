@@ -246,6 +246,9 @@ func knownParameterState(v expr.Value) bool {
 
 // include expands a "- template:" sequence item and returns the resulting items.
 func (e *expander) include(item *yaml.Node, f *frame, key string) ([]*yaml.Node, bool) {
+	if e.exhausted {
+		return nil, false
+	}
 	_, tv := yamlx.Get(item, "template")
 	tpl, tf, ok := e.resolveRef(tv, f)
 	if !ok {
@@ -362,6 +365,10 @@ func (e *expander) extends(root *yaml.Node, f *frame) *yaml.Node {
 	}
 	tv := yamlx.Value(ev, "template")
 	if tv == nil {
+		return root
+	}
+	if e.exhausted {
+		e.doc.MarkOpen(root)
 		return root
 	}
 	if e.doc.HasOrigin(tv) {

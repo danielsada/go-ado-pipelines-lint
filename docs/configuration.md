@@ -21,6 +21,7 @@ templates:
   repoRoot: .          # root for template paths starting with "/"
   lintReferenced: false # opt in to checking branches no caller enables
   ignoreRepositories: [] # aliases to skip, e.g. [OneBranch, External]
+  limitExpansion: false # opt-in budget: true (100000) or node operations, e.g. 500000
 repositories:          # local checkouts, relative to this config file
   Infra: ../Infra
 tasks:
@@ -58,7 +59,7 @@ By default, referenced templates are linted through their callers. Set `template
 
 References use the same checkout-relative resolution as expansion; pipeline filenames in trigger or PR path filters do not become template references. Files used by `extends` retain the extends-template schema during independent checks.
 
-Conditional mapping branches are checked in separate views so alternate values of the same key are not lost. Nested alternatives are included; unrelated choices are varied individually rather than as an exhaustive Cartesian product. Per-expansion safety budgets of 100,000 node operations and 16 MiB of generated or evaluated scalar text also cover alternatives. Exceeding either budget aborts that entry's expansion with ADO208.
+Conditional mapping branches are checked in separate views so alternate values of the same key are not lost. Nested alternatives are included; unrelated choices are varied individually rather than as an exhaustive Cartesian product. The opt-in `templates.limitExpansion` budget (`true` for 100,000 node operations, or a custom number; off by default) also covers alternatives. When it is hit, ADO208 is reported as info and the partially expanded entry is still linted. The `--limit-expansion[=N]` flag overrides this setting; `--limit-expansion=0` disables it.
 
 ## Custom tasks
 

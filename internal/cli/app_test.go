@@ -102,6 +102,36 @@ func TestLintExitCodes(t *testing.T) {
 	}
 }
 
+func TestLimitExpansionFlag(t *testing.T) {
+	list := "split('" + strings.Repeat("x,", 199) + "x', ',')"
+	steps := "steps:\n- ${{ each i in " + list + " }}:\n  - ${{ each j in " + list + " }}:\n    - bash: echo ${{ i }}${{ j }}\n"
+	dir := setup(t, map[string]string{"azure-pipelines.yml": "trigger: none\npool:\n  vmImage: ubuntu-latest\n" + steps})
+	cases := []struct {
+		args  []string
+		cfg   string
+		limit bool
+	}{
+		{nil, "", false},
+		{[]string{"--limit-expansion"}, "", true},
+		{[]string{"--limit-expansion=500000"}, "", false},
+		{nil, "templates:\n  limitExpansion: true\n", true},
+		{[]string{"--limit-expansion=0"}, "templates:\n  limitExpansion: true\n", false},
+	}
+	for _, tc := range cases {
+		if err := os.WriteFile(filepath.Join(dir, ".adolint.yaml"), []byte(tc.cfg), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		args := append([]string{"lint", "--no-scripts"}, tc.args...)
+		code, out, _ := runCLI(t, dir, append(args, "azure-pipelines.yml")...)
+		if code != ExitOK || strings.Contains(out, "info [ADO208]") != tc.limit {
+			t.Errorf("%v with %q: code %d, want limit %v\n%s", tc.args, tc.cfg, code, tc.limit, out)
+		}
+	}
+	if code, _, errOut := runCLI(t, dir, "lint", "--limit-expansion=-5"); code != ExitError || !strings.Contains(errOut, "--limit-expansion") {
+		t.Errorf("negative limit: code %d %s", code, errOut)
+	}
+}
+
 func TestLintConfigAndFormats(t *testing.T) {
 	dir := setup(t, map[string]string{
 		"azure-pipelines.yml": "steps:\n- script: echo\n",

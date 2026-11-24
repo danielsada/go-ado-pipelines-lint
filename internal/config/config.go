@@ -41,6 +41,33 @@ type Templates struct {
 	RepoRoot           string   `yaml:"repoRoot"`
 	LintReferenced     bool     `yaml:"lintReferenced"`
 	IgnoreRepositories []string `yaml:"ignoreRepositories"`
+	// LimitExpansion is an opt-in per-entry node-operation budget (0: no limit).
+	LimitExpansion ExpansionLimit `yaml:"limitExpansion"`
+}
+
+// ExpansionLimit is a node-operation budget. In YAML, true selects DefaultExpansionLimit,
+// false or 0 disables the budget, and a positive integer sets a custom budget.
+type ExpansionLimit int
+
+// DefaultExpansionLimit is the budget used by `limitExpansion: true` and a bare --limit-expansion.
+const DefaultExpansionLimit = 100000
+
+// UnmarshalYAML accepts a boolean or a non-negative integer.
+func (l *ExpansionLimit) UnmarshalYAML(n *yaml.Node) error {
+	var b bool
+	if n.Decode(&b) == nil {
+		*l = 0
+		if b {
+			*l = DefaultExpansionLimit
+		}
+		return nil
+	}
+	var v int
+	if err := n.Decode(&v); err != nil || v < 0 {
+		return fmt.Errorf("line %d: templates.limitExpansion must be true, false or a non-negative number of node operations", n.Line)
+	}
+	*l = ExpansionLimit(v)
+	return nil
 }
 
 // Tasks configures task references not covered by the built-in catalog.

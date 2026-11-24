@@ -8,9 +8,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/danielsada/go-ado-pipelines-lint/internal/config"
 	"github.com/danielsada/go-ado-pipelines-lint/internal/lint"
@@ -151,15 +153,20 @@ func display(dir, abs string) string {
 
 // common holds flags shared by commands that load pipelines.
 type common struct {
-	configPath  string
-	repoRoot    string
-	noTemplates bool
+	configPath     string
+	repoRoot       string
+	noTemplates    bool
+	limitExpansion int
+	flags          *pflag.FlagSet
 }
 
 func (c *common) register(cmd *cobra.Command) {
+	c.flags = cmd.Flags()
 	cmd.Flags().StringVarP(&c.configPath, "config", "c", "", "config file (default: .adolint.yaml found from the working directory upward)")
 	cmd.Flags().StringVar(&c.repoRoot, "repo-root", "", "repository root for template paths starting with / (default: nearest directory containing .git)")
 	cmd.Flags().BoolVar(&c.noTemplates, "no-templates", false, "do not expand template files")
+	cmd.Flags().IntVar(&c.limitExpansion, "limit-expansion", 0, fmt.Sprintf("bound template expansion per entry to N node operations (bare flag: %d; use --limit-expansion=N; 0 disables)", config.DefaultExpansionLimit))
+	cmd.Flags().Lookup("limit-expansion").NoOptDefVal = strconv.Itoa(config.DefaultExpansionLimit)
 }
 
 type session struct {
@@ -170,6 +177,9 @@ type session struct {
 }
 
 func (a *App) session(c *common) (*session, error) {
+	if c.limitExpansion < 0 {
+		return nil, fmt.Errorf("invalid --limit-expansion %d (want a non-negative number of node operations)", c.limitExpansion)
+	}
 	dir, err := a.workdir()
 	if err != nil {
 		return nil, err
@@ -201,13 +211,14 @@ func (a *App) session(c *common) (*session, error) {
 
 func (a *App) engine(s *session, c *common, extra func(*lint.Options)) (*lint.Engine, error) {
 	opts := lint.Options{
-		Registry:    s.registry,
-		Config:      s.cfg,
-		RepoRoot:    s.root,
-		NoTemplates: c.noTemplates || !s.cfg.TemplatesEnabled(),
-		Runner:      a.Runner,
-		ReadFile:    a.ReadFile,
-		Display:     func(p string) string { return display(s.dir, p) },
+		Registry:       s.registry,
+		Config:         s.cfg,
+		RepoRoot:       s.root,
+		NoTemplates:    c.noTemplates || !s.cfg.TemplatesEnabled(),
+		ExpansionLimit: c.expansionLimit(s.cfg),
+		Runner:         a.Runner,
+		ReadFile:       a.ReadFile,
+		Display:        func(p string) string { return display(s.dir, p) },
 	}
 	if opts.Runner == nil {
 		opts.Runner = scripts.ExecRunner{Dir: s.dir}
@@ -216,6 +227,14 @@ func (a *App) engine(s *session, c *common, extra func(*lint.Options)) (*lint.En
 		extra(&opts)
 	}
 	return lint.New(opts)
+}
+
+// expansionLimit returns the --limit-expansion value if given, otherwise templates.limitExpansion.
+func (c *common) expansionLimit(cfg *config.Config) int {
+	if c.flags != nil && c.flags.Changed("limit-expansion") {
+		return c.limitExpansion
+	}
+	return int(cfg.Templates.LimitExpansion)
 }
 
 func (a *App) registryFor() *lint.Registry { return rules.Registry() }

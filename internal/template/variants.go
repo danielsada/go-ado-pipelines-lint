@@ -32,13 +32,16 @@ func (e *expander) chargeTree(n *yaml.Node, f *frame) {
 // forVariants varies one independent mapping choice at a time, including choices nested
 // in alternate branches. It does not construct the Cartesian product of unrelated choices.
 func (e *expander) forVariants(n *yaml.Node, f *frame, emit func(*yaml.Node)) {
-	if n == nil {
+	if n == nil || e.exhausted {
 		return
 	}
 	e.consume(n, f)
 	emit(n)
 	for _, choice := range e.choices[n] {
 		for _, body := range choice.bodies {
+			if e.exhausted {
+				return
+			}
 			alt := e.mappingVariant(n, choice, body, f)
 			e.forVariants(alt, f, emit)
 		}

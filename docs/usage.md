@@ -41,6 +41,7 @@ Files are linted as templates, not as standalone pipelines, if either of these i
 | `--enable IDS` / `--disable IDS` | Enable (at the default severity) or disable rules, as a comma-separated list. |
 | `--fail-on error\|warning\|info\|none` | Lowest severity that makes the exit code 1 (default `warning`). |
 | `--no-templates` | Don't expand template files. |
+| `--limit-expansion[=N]` | Opt in to a per-entry expansion budget (default 100,000 node operations; use `=N` for a custom value). Over budget, ADO208 is reported as info and linting continues on the partial expansion. |
 | `--no-scripts` | Don't run ShellCheck or PSScriptAnalyzer. |
 | `--require-script-linters` | Exit with code 2 if a needed script linter is missing. |
 | `--repo-root DIR` | Root for template paths that start with `/` and for `@self` paths (default: the nearest directory containing `.git`). |
@@ -76,7 +77,7 @@ See [Use in CI](../azure-pipelines/) for a reusable template and copy-paste inst
   - `if`/`elseif`/`else`/`each`/`insert` directives.
 - **Templates in other repositories:** `path@alias` references are expanded when `repositories` maps the alias to a local checkout. Unmapped aliases are skipped (ADO202); nothing is fetched. Stages, jobs and steps passed as parameters to an unresolved `extends` template are still linted.
 - **Uncalled branches:** set `templates.lintReferenced: true` to additionally lint referenced templates with unknown parameters and deduplicate the findings.
-- **Expansion limits:** Azure's 100-file and 100-level limits are enforced. Each expansion also has local budgets of 100,000 node operations and 16 MiB of generated or evaluated scalar text; exceeding either aborts that entry's expansion with ADO208.
+- **Expansion limits:** Azure's 100-file and 100-level limits are enforced. No local work budget applies by default. For untrusted YAML or a hard bound, `--limit-expansion` (or `templates.limitExpansion`) caps each expansion at 100,000 node operations and 16 MiB of generated or evaluated scalar text, including conditional alternatives; `--limit-expansion=N` sets N operations and scales the text budget proportionally. When a budget is hit, ADO208 is reported as info, further templates, loops and alternatives in that entry are not expanded, and the partially expanded entry is still linted.
 - **Ignored repositories:** `templates.ignoreRepositories: [OneBranch]` skips references to these aliases without ADO202 notices, even if a local checkout mapping exists. Alias matching is case-insensitive.
 - **Template classification:** files with a single template body and no pipeline-only keys are treated as templates when under `steps`, `jobs`, `stages`, `phases` or template-named directories.
 - **Old-style parameters:** templates that declare parameters as a mapping, or not at all, accept any parameter, as Azure Pipelines does.
