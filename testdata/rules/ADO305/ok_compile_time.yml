@@ -1,0 +1,14 @@
+parameters:
+- name: debug
+  type: boolean
+  default: false
+variables:
+  flag: ${{ parameters.debug }}
+  evaluated: $[ eq(${{ parameters.debug }}, true) ]
+steps:
+- script: echo parameters.debug
+  condition: and(failed(), eq(${{ parameters.debug }}, true))
+- pwsh: |
+    Write-Host "parameters.debug"
+- script: echo literal
+  condition: eq(variables.message, 'parameters.debug')

@@ -43,7 +43,7 @@ These are all the rules adolint can report. Run `adolint explain <ID>` to see th
 | [ADO205](ADO205/) | `parameter-value-invalid` | error | A parameter value doesn't match the declared type or allowed values. |
 | [ADO206](ADO206/) | `undeclared-parameter-reference` | warning | An expression references a parameter the file doesn't declare. |
 | [ADO207](ADO207/) | `unused-parameter` | info | A declared parameter is never used. |
-| [ADO208](ADO208/) | `template-limits` | error | Template includes form a cycle or exceed documented limits. |
+| [ADO208](ADO208/) | `template-limits` | error | Template includes form a cycle or exceed expansion limits. |
 
 ## Expressions
 
@@ -53,6 +53,7 @@ These are all the rules adolint can report. Run `adolint explain <ID>` to see th
 | [ADO302](ADO302/) | `invalid-function` | error | An unknown function is called, or a function has the wrong number of arguments. |
 | [ADO303](ADO303/) | `runtime-expression-partial` | warning | A runtime expression $[ ] is mixed with other text. |
 | [ADO304](ADO304/) | `template-expression-unsupported-location` | warning | ${{ }} is used where template expressions aren't expanded. |
+| [ADO305](ADO305/) | `runtime-parameter-reference` | warning | A runtime expression references compile-time parameters. |
 
 ## Best practices
 

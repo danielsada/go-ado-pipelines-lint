@@ -37,8 +37,15 @@ type Scripts struct {
 
 // Templates configures template expansion.
 type Templates struct {
-	Enabled  *bool  `yaml:"enabled"`
-	RepoRoot string `yaml:"repoRoot"`
+	Enabled            *bool    `yaml:"enabled"`
+	RepoRoot           string   `yaml:"repoRoot"`
+	LintReferenced     bool     `yaml:"lintReferenced"`
+	IgnoreRepositories []string `yaml:"ignoreRepositories"`
+}
+
+// Tasks configures task references not covered by the built-in catalog.
+type Tasks struct {
+	Known []string `yaml:"known"`
 }
 
 // Config is a parsed configuration.
@@ -46,11 +53,13 @@ type Config struct {
 	// Path is the file the config was loaded from ("" for defaults).
 	Path string `yaml:"-"`
 	// Dir is the directory relative paths in the config are resolved against.
-	Dir       string            `yaml:"-"`
-	RulesRaw  map[string]string `yaml:"rules"`
-	Ignore    []string          `yaml:"ignore"`
-	Templates Templates         `yaml:"templates"`
-	Scripts   Scripts           `yaml:"scripts"`
+	Dir          string            `yaml:"-"`
+	RulesRaw     map[string]string `yaml:"rules"`
+	Ignore       []string          `yaml:"ignore"`
+	Templates    Templates         `yaml:"templates"`
+	Scripts      Scripts           `yaml:"scripts"`
+	Repositories map[string]string `yaml:"repositories"`
+	Tasks        Tasks             `yaml:"tasks"`
 	// Rules holds the parsed per-rule severities.
 	Rules map[string]diag.Severity `yaml:"-"`
 }
@@ -122,6 +131,30 @@ func Parse(data []byte, path string, knownRule func(string) bool) (*Config, erro
 }
 
 func (c *Config) validate() error {
+	aliases := map[string]bool{}
+	for alias, path := range c.Repositories {
+		key := strings.ToLower(alias)
+		if !validRepositoryAlias(alias) || aliases[key] {
+			return fmt.Errorf("invalid or duplicate repository alias %q", alias)
+		}
+		if strings.TrimSpace(path) == "" {
+			return fmt.Errorf("repository %q must have a local checkout path", alias)
+		}
+		aliases[key] = true
+	}
+	ignored := map[string]bool{}
+	for _, alias := range c.Templates.IgnoreRepositories {
+		key := strings.ToLower(alias)
+		if !validRepositoryAlias(alias) || ignored[key] {
+			return fmt.Errorf("templates.ignoreRepositories: invalid or duplicate repository alias %q", alias)
+		}
+		ignored[key] = true
+	}
+	for _, ref := range c.Tasks.Known {
+		if !taskRefRe.MatchString(ref) {
+			return fmt.Errorf("tasks.known entry %q must be Name@major or Name@major.minor.patch", ref)
+		}
+	}
 	switch c.Scripts.ScriptShell {
 	case "", "auto", "bash", "skip":
 	default:
@@ -140,6 +173,24 @@ func (c *Config) validate() error {
 		}
 	}
 	return nil
+}
+
+var taskRefRe = regexp.MustCompile(`^[^@\s]+@[0-9]+(?:\.[0-9]+\.[0-9]+)?$`)
+
+func validRepositoryAlias(alias string) bool {
+	return strings.TrimSpace(alias) != "" && !strings.ContainsAny(alias, "@/\\ \t\r\n") && !strings.EqualFold(alias, "self")
+}
+
+// RepositoryRoots returns case-insensitive aliases resolved against the config directory.
+func (c *Config) RepositoryRoots() map[string]string {
+	roots := map[string]string{}
+	for alias, root := range c.Repositories {
+		if !filepath.IsAbs(root) {
+			root = filepath.Join(c.Dir, root)
+		}
+		roots[strings.ToLower(alias)] = filepath.Clean(root)
+	}
+	return roots
 }
 
 // TemplatesEnabled reports whether template expansion is enabled.

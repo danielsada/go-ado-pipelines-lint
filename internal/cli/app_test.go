@@ -160,6 +160,126 @@ func TestExtractCommand(t *testing.T) {
 	}
 }
 
+func TestExtractConditionalMappings(t *testing.T) {
+	dir := setup(t, map[string]string{"template.yml": `parameters:
+- name: kind
+  type: string
+  default: one
+steps:
+- task: Bash@3
+  inputs:
+    ${{ if true }}:
+      ${{ if eq(parameters.kind, 'one') }}:
+        targetType: inline
+        script: cd one
+      ${{ else }}:
+        ${{ if eq(parameters.kind, 'two') }}:
+          targetType: inline
+          script: cd two
+        ${{ else }}:
+          targetType: inline
+          script: cd three
+`})
+	code, out, errOut := runCLI(t, dir, "extract", "template.yml")
+	if code != ExitOK {
+		t.Fatalf("extract: code %d\n%s", code, errOut)
+	}
+	for _, script := range []string{"cd one", "cd two", "cd three"} {
+		if strings.Count(out, script) != 1 {
+			t.Errorf("expected %q exactly once:\n%s", script, out)
+		}
+	}
+	code, _, errOut = runCLI(t, dir, "extract", "--out", "scripts", "template.yml")
+	if code != ExitOK {
+		t.Fatalf("extract --out: code %d\n%s", code, errOut)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "scripts", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest []manifestEntry
+	if err := json.Unmarshal(b, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest) != 3 {
+		t.Fatalf("expected 3 unique scripts in the manifest, got %+v", manifest)
+	}
+	paths := map[string]bool{}
+	for i, entry := range manifest {
+		if paths[entry.Path] {
+			t.Errorf("duplicate output path %q", entry.Path)
+		}
+		paths[entry.Path] = true
+		line, column := []int{11, 15, 18}[i], []int{17, 19, 19}[i]
+		if entry.File != "template.yml" || entry.Line != line || entry.Column != column || entry.Lang != "bash" {
+			t.Errorf("incorrect manifest origin for script %d: %+v", i, entry)
+		}
+		content, err := os.ReadFile(filepath.Join(dir, "scripts", entry.Path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"cd one", "cd two", "cd three"}[i]; strings.TrimSpace(string(content)) != want {
+			t.Errorf("output %q contains %q, want %q", entry.Path, content, want)
+		}
+	}
+}
+
+func TestMappedRepositoryConfigCLI(t *testing.T) {
+	dir := setup(t, map[string]string{
+		"main/a.yml": "trigger: none\nsteps:\n- template: gate.yml@INFRA\n- template: bad.yml@Vendor\n",
+		"main/b.yml": "trigger: none\nsteps:\n- template: gate.yml@infra\n",
+		"main/config/lint.yaml": `repositories:
+  Infra: ../../infra
+  Vendor: ../../vendor
+templates:
+  repoRoot: ..
+  lintReferenced: true
+  ignoreRepositories: [vendor]
+rules:
+  ADO105: warning
+  ADO201: error
+  ADO202: error
+`,
+		"infra/gate.yml": `parameters:
+- name: run
+  type: boolean
+  default: false
+steps:
+- ${{ if parameters.run }}:
+  - task: MissingVersion
+- task: SuppressedVersion # adolint:disable-line ADO105
+`,
+		"vendor/bad.yml": "steps:\n- task: VendorMissingVersion\n",
+	})
+	for _, threshold := range []string{"warning", "error"} {
+		args := []string{"lint", "--config", filepath.Join("config", "lint.yaml"), "--no-scripts", "--format", "json", "--fail-on", threshold, "a.yml", "b.yml"}
+		code, out, errOut := runCLI(t, filepath.Join(dir, "main"), args...)
+		wantCode := ExitFindings
+		if threshold == "error" {
+			wantCode = ExitOK
+		}
+		if code != wantCode {
+			t.Fatalf("fail-on %s: code %d, want %d\n%s\n%s", threshold, code, wantCode, out, errOut)
+		}
+		var report struct {
+			Diagnostics []struct {
+				RuleID, Severity, File string
+				Line                   int
+			}
+		}
+		if err := json.Unmarshal([]byte(out), &report); err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Diagnostics) != 1 {
+			t.Fatalf("expected one deduplicated, unsuppressed finding:\n%s", out)
+		}
+		d := report.Diagnostics[0]
+		if d.RuleID != "ADO105" || d.Severity != "warning" || d.File != filepath.ToSlash(filepath.Join(dir, "infra", "gate.yml")) || d.Line != 7 {
+			t.Errorf("incorrect mapped-checkout diagnostic: %+v", d)
+		}
+	}
+}
+
 func TestRulesExplainVersion(t *testing.T) {
 	code, out, _ := runCLI(t, t.TempDir(), "rules")
 	if code != ExitOK || !strings.Contains(out, "ADO402  info (off)") || !strings.Contains(out, "ADO701") {

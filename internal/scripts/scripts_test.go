@@ -2,15 +2,18 @@ package scripts
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/danielsada/go-ado-pipelines-lint/internal/config"
 	"github.com/danielsada/go-ado-pipelines-lint/internal/diag"
+	"github.com/danielsada/go-ado-pipelines-lint/internal/expr"
 	"github.com/danielsada/go-ado-pipelines-lint/internal/model"
 	"github.com/danielsada/go-ado-pipelines-lint/internal/template"
 	"github.com/danielsada/go-ado-pipelines-lint/internal/yamlx"
@@ -30,6 +33,144 @@ func TestPlaceholders(t *testing.T) {
 	ps := Placeholders("(Get-Date).AddDays(${{ parameters.days }}) $(Get-Date) & $(Build.SourcesDirectory)/x.ps1 $${{ p.x }} -eq ${{ p.y }}", nil, PowerShell)
 	if want := "(Get-Date).AddDays($" + u("{{ parameters.days }}") + ") $(Get-Date) & " + u("$(Build.SourcesDirectory)") + "/x.ps1 $" + u("${{ p.x }}") + " -eq $" + u("{{ p.y }}"); ps != want {
 		t.Errorf("PowerShell placeholders:\n got %q\nwant %q", ps, want)
+	}
+}
+
+func TestPowerShellCastPlaceholders(t *testing.T) {
+	for _, before := range []string{"[int]", "[System.Int32] ", "[Nullable[int]]", "$x = [int]", "($x -eq [int]"} {
+		in := before + "${{ parameters.x }}"
+		got := Placeholders(in, nil, PowerShell)
+		want := before + "$" + strings.Repeat("_", len("${{ parameters.x }}")-1)
+		if got != want || len(got) != len(in) {
+			t.Errorf("%q => %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestPowerShellQuotedPlaceholders(t *testing.T) {
+	expression := "$(Build.DefinitionName)"
+	for _, prefix := range []string{
+		`Write-Host "##[error]`,
+		`Write-Host "##[warning]`,
+		`Write-Host "##vso[task.logissue type=error]`,
+		`Write-Host '##[section]`,
+		"Write-Host @\"\n\"quoted\" ##[error]",
+		"Write-Host \"escaped `\" ##[error]",
+	} {
+		in := prefix + expression + ": failed"
+		want := prefix + strings.Repeat("_", len(expression)) + ": failed"
+		if got := Placeholders(in, nil, PowerShell); got != want {
+			t.Errorf("%q => %q, want %q", in, got, want)
+		}
+	}
+	in := `Write-Host "$([int]${{ parameters.x }})"`
+	want := `Write-Host "$([int]$` + strings.Repeat("_", len("${{ parameters.x }}")-1) + `)"`
+	if got := Placeholders(in, nil, PowerShell); got != want {
+		t.Errorf("cast in string subexpression: got %q, want %q", got, want)
+	}
+	in = "Write-Host @\"\n$([int]${{ parameters.x }}) ##[error]$(Build.DefinitionName)\n\"@"
+	want = "Write-Host @\"\n$([int]$" + strings.Repeat("_", len("${{ parameters.x }}")-1) + ") ##[error]" + strings.Repeat("_", len(expression)) + "\n\"@"
+	if got := Placeholders(in, nil, PowerShell); got != want {
+		t.Errorf("cast in here-string subexpression: got %q, want %q", got, want)
+	}
+}
+
+func FuzzPlaceholders(f *testing.F) {
+	for _, seed := range []string{
+		"echo $(Build.SourcesDirectory) ${{ parameters.name }} $(pwd)",
+		"Write-Host \"##[error]$(Build.DefinitionName): failed\"",
+		"Write-Host \"$([int]${{ parameters.number }})\"",
+		"$[ format('{0}', '${{ parameters.name }}') ]",
+		"echo ${{\r\n parameters.name\r\n}}",
+		"echo caf\u00e9 ${{ parameters.name }}\n",
+		"${{ unterminated $(Build.Name)\n",
+		"Write-Host @\"\n$([int]${{ parameters.number }})\n\"@",
+		"$($(0))",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, input string) {
+		if len(input) > 4096 {
+			t.Skip()
+		}
+		mutable := make([]bool, len(input))
+		spans, _ := expr.Scan(input)
+		for _, span := range spans {
+			replace := span.Kind == expr.SpanTemplate || span.Kind == expr.SpanMacro && isMacro(span.Expr, nil)
+			if !replace {
+				continue
+			}
+			for i := span.Start; i < span.End; i++ {
+				mutable[i] = true
+			}
+		}
+		for _, lang := range []Lang{Bash, PowerShell} {
+			got := Placeholders(input, nil, lang)
+			if len(got) != len(input) {
+				t.Fatalf("%s changed byte offsets: %q => %q", lang, input, got)
+			}
+			for i := range len(input) {
+				if (input[i] == '\n' || input[i] == '\r') && got[i] != input[i] {
+					t.Fatalf("%s changed a line ending at byte %d: %q => %q", lang, i, input, got)
+				}
+				if got[i] != input[i] && got[i] != '_' && got[i] != '$' {
+					t.Fatalf("%s corrupted a non-placeholder byte at %d: %q => %q", lang, i, input, got)
+				}
+				if got[i] != input[i] && !mutable[i] {
+					t.Fatalf("%s changed a byte outside an Azure expression at %d: %q => %q", lang, i, input, got)
+				}
+			}
+		}
+	})
+}
+
+func TestPowerShellPlaceholderSyntax(t *testing.T) {
+	if !scriptToolAvailable(t, "pwsh") {
+		t.Skip("pwsh is not installed")
+	}
+	cases := []struct{ Name, Text string }{
+		{"logging", `Write-Host "##[error]$(Build.DefinitionName): failed"`},
+		{"single quotes", `Write-Host 'can''t ##[section]$(Build.DefinitionName): failed'`},
+		{"escaped quotes", "Write-Host \"escaped `\" ##[warning]$(Build.DefinitionName): failed\""},
+		{"casts", "$number = [int]${{ parameters.number }}\n[int]${{ parameters.number }}"},
+		{"nested subexpressions", `Write-Host "$([int]${{ parameters.number }}): $([Math]::Abs([int]${{ parameters.number }}))"`},
+		{"here string", "Write-Host @\"\n\"quoted\" ##[error]$(Build.DefinitionName)\n$([int]${{ parameters.number }}) ##[error]$(Build.DefinitionName)\n\"@"},
+		{"line comment", "# unmatched \" and [\n[int]${{ parameters.number }}"},
+		{"block comment", "<#\nunmatched \" and [\n#>\n[int]${{ parameters.number }}"},
+		{"comment opener inside comment", "<#\n<# another opener\n#>\n[int]${{ parameters.number }}"},
+	}
+	for i := range cases {
+		cases[i].Text = Placeholders(cases[i].Text, nil, PowerShell)
+	}
+	input, err := json.Marshal(cases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `
+$failed = $false
+foreach ($sample in ([Console]::In.ReadToEnd() | ConvertFrom-Json)) {
+    $tokens = $null
+    $parseErrors = $null
+    $null = [System.Management.Automation.Language.Parser]::ParseInput($sample.Text, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors.Count -gt 0) {
+        [Console]::Error.WriteLine($sample.Name + ': ' + ($parseErrors.Message -join '; '))
+        $failed = $true
+    }
+}
+if ($failed) { exit 1 }
+`)
+	cmd.Stdin = strings.NewReader(string(input))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("masked scripts must parse without execution: %v\n%s", err, output)
+	}
+}
+
+func TestPinnedTaskScripts(t *testing.T) {
+	scripts := extract(t, "steps:\n- task: Bash@3.250.1\n  inputs:\n    targetType: inline\n    script: echo bash\n- task: PowerShell@2.250.1\n  inputs:\n    targetType: inline\n    script: Write-Host test\n", Options{})
+	if len(scripts) != 2 || scripts[0].Lang != Bash || scripts[1].Lang != PowerShell {
+		t.Fatalf("full pins should retain script extraction: %+v", scripts)
 	}
 }
 
@@ -233,21 +374,23 @@ func TestToolMissing(t *testing.T) {
 	}
 }
 
+func scriptToolAvailable(t *testing.T, tool string) bool {
+	t.Helper()
+	if _, err := exec.LookPath(tool); err == nil {
+		return true
+	}
+	if os.Getenv("ADOLINT_INTEGRATION") != "" {
+		t.Errorf("%s is required when ADOLINT_INTEGRATION is set", tool)
+	}
+	return false
+}
+
 // TestRealTools runs the installed linters. It is skipped when they are missing unless
 // ADOLINT_INTEGRATION is set (as in CI), in which case missing tools fail the test.
 func TestRealTools(t *testing.T) {
-	need := func(tool string) bool {
-		if _, err := exec.LookPath(tool); err == nil {
-			return true
-		}
-		if os.Getenv("ADOLINT_INTEGRATION") != "" {
-			t.Errorf("%s is required when ADOLINT_INTEGRATION is set", tool)
-		}
-		return false
-	}
 	scripts := extract(t, pipelineYAML, Options{})
 	opts := LintOptions{Require: os.Getenv("ADOLINT_INTEGRATION") != "", ShellCheck: config.Tool{Profile: "all"}}
-	if need("shellcheck") {
+	if scriptToolAvailable(t, "shellcheck") {
 		ds, err := Lint(context.Background(), ExecRunner{}, scripts[:3], opts)
 		if err != nil {
 			t.Fatal(err)
@@ -259,7 +402,7 @@ func TestRealTools(t *testing.T) {
 			}
 		}
 	}
-	if need("pwsh") {
+	if scriptToolAvailable(t, "pwsh") {
 		ps := []*Script{{ID: 0, Lang: PowerShell, File: "a.yml", Line: 5, Column: 3, singleLine: true, Text: `Invoke-Expression "x"; $unused = 1`}}
 		ds, err := Lint(context.Background(), ExecRunner{}, ps, opts)
 		if err != nil {

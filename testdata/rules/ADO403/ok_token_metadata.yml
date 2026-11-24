@@ -1,0 +1,10 @@
+trigger: none
+steps:
+- script: ./get-token.sh
+  env:
+    ACCESS_TOKEN_RESOURCE: https://management.azure.com/
+    ACCESS_TOKEN_AUDIENCE: api://application
+    ACCESS_TOKEN_URL: https://login.microsoftonline.com/
+    ACCESS_TOKEN_URI: api://application
+    ACCESS_TOKEN_SCOPE: api://application/.default
+    ACCESS_TOKEN_ID: application-id

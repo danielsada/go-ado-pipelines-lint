@@ -36,7 +36,7 @@ func checkImplicitPR(c *lint.PipelineContext) {
 
 var (
 	secretNameRe   = regexp.MustCompile(`(?i)(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|connection[_-]?string|client[_-]?secret|credential)`)
-	secretExceptRe = regexp.MustCompile(`(?i)(name|names|url|uri|file|path|id|type|version|enabled|length|count|scope|endpoint|connection|header|location|kind|mode|policy)$`)
+	secretExceptRe = regexp.MustCompile(`(?i)(name|names|url|uri|file|path|id|type|version|enabled|length|count|scope|resource|audience|endpoint|connection|header|location|kind|mode|policy)$`)
 	nonSecretRe    = regexp.MustCompile(`(?i)^(true|false|yes|no|on|off|none|null|\d{1,3})$`)
 	connStrRe      = regexp.MustCompile(`^\s*[A-Za-z][\w ]*=[^;]*(;\s*[A-Za-z][\w ]*=[^;]*)*;?\s*$`)
 	connSecretRe   = regexp.MustCompile(`(?i)(^|;)\s*(password|pwd|accountkey|sharedaccesskey|sharedaccesssignature|appkey|clientsecret|secret|token|sig|key)\s*=`)

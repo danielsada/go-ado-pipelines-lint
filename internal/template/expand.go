@@ -1,6 +1,7 @@
 package template
 
 import (
+	"fmt"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -26,10 +27,22 @@ const (
 	MaxDepth = 100
 )
 
+// MaxExpansionWork bounds node creation and alternative traversal per expansion.
+const MaxExpansionWork = 100000
+
+// MaxExpansionBytes bounds scalar text copied or produced during expansion.
+const MaxExpansionBytes = 16 << 20
+
 // Options configures expansion.
 type Options struct {
 	// RepoRoot resolves template paths that start with "/".
 	RepoRoot string
+	// Repositories maps lower-case repository aliases to local checkout roots.
+	Repositories map[string]string
+	// IgnoreRepositories lists aliases skipped without unresolved-reference diagnostics.
+	IgnoreRepositories []string
+	// SourceRoot is the entry file's checkout root, if different from RepoRoot.
+	SourceRoot string
 	// Loader loads template files. Required unless NoTemplates is set.
 	Loader *Loader
 	// NoTemplates disables template file resolution (directives are still evaluated).
@@ -41,6 +54,10 @@ type Result struct {
 	Doc    *yamlx.Doc
 	Diags  []diag.Diagnostic
 	Params []*Param
+	// Alternatives preserves other possible conditional mapping values for linting.
+	Alternatives []*yamlx.Doc
+	// ExtendsSources identifies files included through extends rather than a body list.
+	ExtendsSources map[*yamlx.Source]bool
 }
 
 type expander struct {
@@ -50,15 +67,23 @@ type expander struct {
 	files      map[string]bool
 	limitShown bool
 	// remote records unresolved references already reported, so each is reported once.
-	remote map[string]bool
+	remote         map[string]bool
+	work           int
+	textBytes      int
+	choices        map[*yaml.Node][]*mappingChoice
+	extendsSources map[*yamlx.Source]bool
 }
 
+type expansionLimit struct{}
+
 type frame struct {
-	src   *yamlx.Source
-	ctx   *expr.Context
-	depth int
-	stack []string
-	cond  bool
+	src      *yamlx.Source
+	ctx      *expr.Context
+	depth    int
+	stack    []string
+	cond     bool
+	repoRoot string
+	parent   *frame
 }
 
 func (f *frame) with(name string, v expr.Value) *frame {
@@ -83,20 +108,32 @@ func ExpandPipeline(src *yamlx.Source, opts Options) *Result {
 	return expand(src, opts, true)
 }
 
-// ExpandTemplate expands a template file on its own, with its parameters bound like
-// pipeline parameters (unknown for scalar types, defaults otherwise).
+// ExpandTemplate expands a template file on its own, with all parameters unknown.
 func ExpandTemplate(src *yamlx.Source, opts Options) *Result {
 	return expand(src, opts, false)
 }
 
-func expand(src *yamlx.Source, opts Options, pipeline bool) *Result {
-	e := &expander{opts: opts, doc: yamlx.NewDoc(src), files: map[string]bool{}, remote: map[string]bool{}}
-	res := &Result{Doc: e.doc}
+func expand(src *yamlx.Source, opts Options, pipeline bool) (res *Result) {
+	e := &expander{opts: opts, doc: yamlx.NewDoc(src), files: map[string]bool{}, remote: map[string]bool{},
+		choices: map[*yaml.Node][]*mappingChoice{}, extendsSources: map[*yamlx.Source]bool{}}
+	res = &Result{Doc: e.doc, ExtendsSources: e.extendsSources}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if _, ok := recovered.(expansionLimit); !ok {
+				panic(recovered)
+			}
+			res.Doc.Root, res.Alternatives = nil, nil
+		}
+		res.Diags = e.diags
+	}()
 	if src.Root == nil {
 		return res
 	}
 	res.Params = DeclaredParams(src.Root)
-	f := &frame{src: src, ctx: expr.NewContext(), stack: []string{src.Abs}}
+	f := &frame{src: src, ctx: expr.NewContext(), stack: []string{src.Abs}, repoRoot: opts.RepoRoot}
+	if opts.SourceRoot != "" {
+		f.repoRoot = opts.SourceRoot
+	}
 	if !pipeline && !StrictParams(res.Params) {
 		// A template without typed declarations accepts any parameter, so on its own nothing is
 		// known about its parameters (not even which ones exist).
@@ -112,12 +149,38 @@ func expand(src *yamlx.Source, opts Options, pipeline bool) *Result {
 		f.ctx.Set("parameters", e.rootParams(res.Params, f))
 	}
 	root := e.node(src.Root, f, "")
-	if pipeline && yamlx.IsMap(root) {
+	if yamlx.IsMap(root) {
 		root = e.extends(root, f)
 	}
 	e.doc.Root = root
-	res.Diags = e.diags
+	e.forVariants(root, f, func(n *yaml.Node) {
+		if n != root {
+			e.chargeTree(n, f)
+			res.Alternatives = append(res.Alternatives, e.doc.WithRoot(n))
+		}
+	})
 	return res
+}
+
+func (e *expander) consume(pos *yaml.Node, f *frame) {
+	e.consumeWork(1, pos, f)
+}
+
+func (e *expander) consumeWork(amount int, pos *yaml.Node, f *frame) {
+	if amount > MaxExpansionWork-e.work {
+		e.emit(RuleLimits, diag.Error, e.at(pos, f), fmt.Sprintf("template expansion exceeds the work limit of %d node operations", MaxExpansionWork))
+		// Abort every enclosing loop, not just the current recursive include.
+		panic(expansionLimit{})
+	}
+	e.work += amount
+}
+
+func (e *expander) consumeText(value string, pos *yaml.Node, f *frame) {
+	if len(value) > MaxExpansionBytes-e.textBytes {
+		e.emit(RuleLimits, diag.Error, e.at(pos, f), fmt.Sprintf("template expansion exceeds the text limit of %d bytes", MaxExpansionBytes))
+		panic(expansionLimit{})
+	}
+	e.textBytes += len(value)
 }
 
 func (e *expander) rootParams(ps []*Param, f *frame) expr.Value {
@@ -151,6 +214,8 @@ func (e *expander) at(n *yaml.Node, f *frame) diag.Location {
 }
 
 func (e *expander) newNode(kind yaml.Kind, tag string, pos *yaml.Node, f *frame) *yaml.Node {
+	e.consume(pos, f)
+	e.consumeText(pos.Value, pos, f)
 	n := &yaml.Node{Kind: kind, Tag: tag, Line: pos.Line, Column: pos.Column, Style: pos.Style}
 	e.doc.SetOrigin(n, f.src, pos)
 	if f.cond {
@@ -166,6 +231,7 @@ func (e *expander) clone(n *yaml.Node, f *frame) *yaml.Node {
 		return nil
 	}
 	c := e.newNode(n.Kind, n.Tag, n, f)
+	e.choices[c] = e.choices[n]
 	if e.doc.Conditional(n) {
 		e.doc.MarkConditional(c)
 	}
@@ -216,6 +282,7 @@ func (e *expander) scalar(n *yaml.Node, f *frame) *yaml.Node {
 	}
 	out := e.clone(n, f)
 	out.Value = e.interpolate(n.Value, f)
+	e.consumeText(out.Value, n, f)
 	return out
 }
 
@@ -266,6 +333,7 @@ func (e *expander) fromValue(v expr.Value, pos *yaml.Node, f *frame) *yaml.Node 
 	}
 	out := e.newNode(yaml.ScalarNode, "!!str", pos, f)
 	out.Value = v.String()
+	e.consumeText(out.Value, pos, f)
 	if v.Kind == expr.KNull {
 		out.Tag = "!!null"
 	}
@@ -276,6 +344,7 @@ func (e *expander) fromValue(v expr.Value, pos *yaml.Node, f *frame) *yaml.Node 
 type chain struct {
 	active bool
 	state  int
+	choice *mappingChoice
 }
 
 const (
@@ -284,13 +353,14 @@ const (
 	chainUnknown
 )
 
-func (c *chain) reset() { c.active = false }
+func (c *chain) reset() { c.active, c.choice = false, nil }
 
 // step returns whether the branch is included and whether it is conditional (unresolved).
 func (c *chain) step(d *expr.Directive, ok bool, f *frame) (include, cond bool) {
 	switch d.Kind {
 	case expr.DirIf:
 		c.active, c.state = true, chainNone
+		c.choice = nil
 		return c.branch(d, ok, f)
 	case expr.DirElseIf:
 		if !c.active {
@@ -352,7 +422,10 @@ func (e *expander) mapping(n *yaml.Node, f *frame, key string) *yaml.Node {
 		switch d.Kind {
 		case expr.DirIf, expr.DirElseIf, expr.DirElse:
 			if inc, cond := ch.step(d, err == nil, f); inc {
-				e.mergeBody(out, v, f.conditional(cond), key, &scalarRes)
+				bf := f.conditional(cond)
+				b := e.node(v, bf, key)
+				e.recordChoice(out, b, &ch, cond)
+				e.mergeExpanded(out, b, bf, &scalarRes)
 			}
 		case expr.DirEach:
 			ch.reset()
@@ -391,8 +464,13 @@ func (e *expander) addPair(out, k, v *yaml.Node, f *frame) {
 
 func (e *expander) mergeBody(out, body *yaml.Node, f *frame, key string, scalarRes **yaml.Node) {
 	b := e.node(body, f, key)
+	e.mergeExpanded(out, b, f, scalarRes)
+}
+
+func (e *expander) mergeExpanded(out, b *yaml.Node, f *frame, scalarRes **yaml.Node) {
 	switch {
 	case yamlx.IsMap(b):
+		e.choices[out] = append(e.choices[out], e.choices[b]...)
 		for i := 0; i+1 < len(b.Content); i += 2 {
 			e.addPair(out, b.Content[i], b.Content[i+1], f)
 		}

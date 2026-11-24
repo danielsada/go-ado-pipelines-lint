@@ -76,7 +76,10 @@ Thanks for your interest in contributing! Here's how to get started.
 - Use table-driven tests where appropriate.
 - Golden files: `go test ./internal/report -update` regenerates report goldens.
 - Fuzz the expression parser with `go test ./internal/expr -run '^$' -fuzz FuzzParse`.
-- Set `ADOLINT_INTEGRATION=1` to require ShellCheck/PSScriptAnalyzer in the integration test (CI does this).
+- Fuzz script placeholder byte offsets, line endings and unchanged text with `go test ./internal/scripts -run '^$' -fuzz FuzzPlaceholders -fuzztime 20s -parallel 2`.
+- PowerShell placeholder tests parse masked scripts with the real `pwsh` parser without executing them. They skip locally when `pwsh` is unavailable.
+- Set `ADOLINT_INTEGRATION=1` to require ShellCheck/PSScriptAnalyzer and the PowerShell parser in integration tests (Linux CI does this).
+- CI also runs the suite on Windows to exercise native checkout paths and CLI behavior; Linux CI runs a bounded placeholder fuzz test.
 - Run `make test` to execute the test suite.
 - Aim for ≥80% coverage on new code.
 

@@ -40,6 +40,7 @@ func (a *App) lintCmd() *cobra.Command {
 for azure-pipelines*.yml files and YAML files under .azure-pipelines/, .azuredevops/,
 .pipelines/ and azure-pipelines/. Files referenced as templates are linted as part of the
 pipelines that include them.
+Set templates.lintReferenced: true in .adolint.yaml to also check their uncalled branches.
 
 Exit codes: 0 no findings at or above --fail-on, 1 findings, 2 usage, I/O or configuration error.`,
 		RunE: func(cmd *cobra.Command, args []string) error { return a.runLint(cmd, f, args) },
@@ -315,8 +316,7 @@ func (a *App) runExtract(f *extractFlags, file string) error {
 	}
 	eng.Expand(en)
 	x := scripts.NewExtractor(scripts.Options{ScriptShell: s.cfg.Scripts.ScriptShell})
-	x.Add(en.Model)
-	for _, m := range lint.ExtendsParameterPipelines(en) {
+	for _, m := range en.Pipelines() {
 		x.Add(m)
 	}
 	found := x.Scripts()

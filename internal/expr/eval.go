@@ -11,6 +11,8 @@ import (
 // Names are matched case-insensitively. Missing names evaluate to Unknown.
 type Context struct {
 	named map[string]Value
+	// Status optionally supplies known results for zero-argument status functions.
+	Status map[string]Value
 }
 
 // NewContext creates an empty context.
@@ -22,6 +24,7 @@ func (c *Context) Set(name string, v Value) { c.named[strings.ToLower(name)] = v
 // With returns a copy of the context with an additional binding.
 func (c *Context) With(name string, v Value) *Context {
 	n := NewContext()
+	n.Status = c.Status
 	for k, val := range c.named {
 		n.named[k] = val
 	}
@@ -168,6 +171,11 @@ func call(c *Call, ctx *Context) Value {
 	f, ok := LookupFunc(c.Name)
 	if !ok || len(c.Args) < f.Min || (f.Max >= 0 && len(c.Args) > f.Max) {
 		return Unknown()
+	}
+	if f.Status && len(c.Args) == 0 && ctx != nil {
+		if v, ok := ctx.Status[strings.ToLower(c.Name)]; ok {
+			return v
+		}
 	}
 	args := make([]Value, len(c.Args))
 	for i, a := range c.Args {

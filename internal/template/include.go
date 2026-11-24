@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -82,17 +83,26 @@ func (e *expander) resolveRef(tv *yaml.Node, f *frame) (*yamlx.Source, *frame, b
 		return nil, nil, false
 	}
 	ref := strings.TrimSpace(e.interpolate(tv.Value, f))
+	path, alias := SplitRef(ref)
+	if alias != "" && slices.ContainsFunc(e.opts.IgnoreRepositories, func(ignored string) bool { return strings.EqualFold(alias, ignored) }) {
+		return nil, nil, false
+	}
 	if ref == "" || expr.HasDynamic(ref) {
 		e.emit(RuleUnresolved, diag.Info, e.at(tv, f), fmt.Sprintf("template reference %q cannot be resolved statically; its contents are not linted", tv.Value))
 		return nil, nil, false
 	}
-	path, alias := SplitRef(ref)
-	if alias != "" && !strings.EqualFold(alias, "self") {
+	repoRoot := f.repoRoot
+	if strings.EqualFold(alias, "self") {
+		repoRoot = e.opts.RepoRoot
+	} else if alias != "" {
+		repoRoot = e.opts.Repositories[strings.ToLower(alias)]
+	}
+	if alias != "" && repoRoot == "" && !strings.EqualFold(alias, "self") {
 		if e.remote[strings.ToLower(ref)] {
 			return nil, nil, false
 		}
 		e.remote[strings.ToLower(ref)] = true
-		e.emit(RuleUnresolved, diag.Info, e.at(tv, f), fmt.Sprintf("template %q is in repository %q; only local templates are expanded, so its contents are not linted", path, alias))
+		e.emit(RuleUnresolved, diag.Info, e.at(tv, f), fmt.Sprintf("template %q is in repository %q without a local checkout mapping; its contents are not linted", path, alias))
 		return nil, nil, false
 	}
 	abs := e.locate(path, alias, f)
@@ -113,7 +123,7 @@ func (e *expander) resolveRef(tv *yaml.Node, f *frame) (*yamlx.Source, *frame, b
 		return nil, nil, false
 	}
 	stack := append(append([]string(nil), f.stack...), abs)
-	return src, &frame{src: src, ctx: expr.NewContext(), depth: f.depth + 1, stack: stack, cond: f.cond}, true
+	return src, &frame{src: src, ctx: expr.NewContext(), depth: f.depth + 1, stack: stack, cond: f.cond, repoRoot: repoRoot, parent: f}, true
 }
 
 // locate resolves a template path. Paths are relative to the including file (or to the repository
@@ -121,40 +131,42 @@ func (e *expander) resolveRef(tv *yaml.Node, f *frame) (*yamlx.Source, *frame, b
 // from the repository root: @self paths inside parameters handed to another repository's template are
 // evaluated there, relative to the root of this repository.
 func (e *expander) locate(path, alias string, f *frame) string {
-	abs := e.absPath(path, f)
-	if !strings.EqualFold(alias, "self") || e.opts.RepoRoot == "" {
+	opts := e.opts
+	opts.SourceRoot = f.repoRoot
+	return opts.ResolvePath(path, alias, f.src)
+}
+
+// ResolvePath resolves a static reference using the same checkout rules as expansion.
+func (o Options) ResolvePath(path, alias string, src *yamlx.Source) string {
+	currentRoot := o.SourceRoot
+	if currentRoot == "" {
+		currentRoot = o.RepoRoot
+	}
+	if alias != "" && !strings.EqualFold(alias, "self") {
+		return filepath.Join(o.Repositories[strings.ToLower(alias)], filepath.FromSlash(path))
+	}
+	if strings.EqualFold(alias, "self") && currentRoot != o.RepoRoot {
+		return filepath.Join(o.RepoRoot, filepath.FromSlash(path))
+	}
+	p := filepath.FromSlash(path)
+	abs := filepath.Join(filepath.Dir(src.Abs), p)
+	if strings.HasPrefix(p, string(filepath.Separator)) {
+		abs = filepath.Join(currentRoot, p)
+	}
+	if !strings.EqualFold(alias, "self") || o.RepoRoot == "" || o.Loader == nil {
 		return abs
 	}
-	if _, err := e.opts.Loader.Load(abs); err == nil || !errors.Is(err, fs.ErrNotExist) {
+	if _, err := o.Loader.Load(abs); err == nil || !errors.Is(err, fs.ErrNotExist) {
 		return abs
 	}
-	rooted := filepath.Join(e.opts.RepoRoot, filepath.FromSlash(path))
-	if _, err := e.opts.Loader.Load(rooted); err == nil {
+	rooted := filepath.Join(o.RepoRoot, p)
+	if _, err := o.Loader.Load(rooted); err == nil {
 		return rooted
 	}
 	return abs
 }
 
-func (e *expander) absPath(path string, f *frame) string {
-	path = filepath.FromSlash(path)
-	if strings.HasPrefix(path, string(filepath.Separator)) {
-		return filepath.Join(e.opts.RepoRoot, path)
-	}
-	return filepath.Join(filepath.Dir(f.src.Abs), path)
-}
-
 func (e *expander) checkLimits(abs string, at *yaml.Node, f *frame) bool {
-	for i, s := range f.stack {
-		if s != abs {
-			continue
-		}
-		var names []string
-		for _, p := range append(f.stack[i:], abs) {
-			names = append(names, e.opts.Loader.Display(p))
-		}
-		e.emit(RuleLimits, diag.Error, e.at(at, f), "template include cycle: "+strings.Join(names, " -> "))
-		return false
-	}
 	if f.depth+1 > MaxDepth {
 		e.emit(RuleLimits, diag.Error, e.at(at, f), fmt.Sprintf("templates are nested more than %d levels deep", MaxDepth))
 		return false
@@ -166,6 +178,68 @@ func (e *expander) checkLimits(abs string, at *yaml.Node, f *frame) bool {
 			e.emit(RuleLimits, diag.Error, e.at(at, f), fmt.Sprintf("more than %d template files are included", MaxFiles))
 		}
 		return false
+	}
+	return true
+}
+
+// checkCycle compares bound parameters, not just paths: guarded recursion can terminate.
+func (e *expander) checkCycle(tf *frame, at *yaml.Node, f *frame) bool {
+	params, _ := tf.ctx.Lookup("parameters")
+	state, known := params.JSON()
+	known = known && knownParameterState(params)
+	for prev := tf.parent; prev != nil; prev = prev.parent {
+		p, _ := prev.ctx.Lookup("parameters")
+		previous, ok := p.JSON()
+		if prev.src.Abs != tf.src.Abs || prev.repoRoot != tf.repoRoot {
+			continue
+		}
+		if !known && sameParameterState(params, p) {
+			e.emit(RuleUnresolved, diag.Info, e.at(at, f), fmt.Sprintf("recursive template %q has unknown parameters; further expansion cannot be resolved statically", tf.src.Path))
+			return false
+		}
+		if !known || !ok || previous != state {
+			continue
+		}
+		var names []string
+		for _, path := range tf.stack[prev.depth:] {
+			names = append(names, e.opts.Loader.Display(path))
+		}
+		e.emit(RuleLimits, diag.Error, e.at(at, f), "template include cycle: "+strings.Join(names, " -> "))
+		return false
+	}
+	return true
+}
+
+func sameParameterState(a, b expr.Value) bool {
+	if a.Kind != b.Kind || a.B != b.B || a.N != b.N || a.S != b.S || len(a.Arr) != len(b.Arr) || len(a.Obj) != len(b.Obj) {
+		return false
+	}
+	for i := range a.Arr {
+		if !sameParameterState(a.Arr[i], b.Arr[i]) {
+			return false
+		}
+	}
+	for i := range a.Obj {
+		if !strings.EqualFold(a.Obj[i].Key, b.Obj[i].Key) || !sameParameterState(a.Obj[i].Val, b.Obj[i].Val) {
+			return false
+		}
+	}
+	return true
+}
+
+func knownParameterState(v expr.Value) bool {
+	if !v.Known() || expr.HasDynamic(v.S) {
+		return false
+	}
+	for _, item := range v.Arr {
+		if !knownParameterState(item) {
+			return false
+		}
+	}
+	for _, kv := range v.Obj {
+		if expr.HasDynamic(kv.Key) || !knownParameterState(kv.Val) {
+			return false
+		}
 	}
 	return true
 }
@@ -182,6 +256,9 @@ func (e *expander) include(item *yaml.Node, f *frame, key string) ([]*yaml.Node,
 		passed = e.node(pv, f, "parameters")
 	}
 	tf.ctx.Set("parameters", e.bind(tpl, passed, tv, f, tf))
+	if !e.checkCycle(tf, tv, f) {
+		return nil, false
+	}
 	bodyKey, body := templateBody(tpl.Root, key)
 	if body == nil {
 		if bodyKey != "" {
@@ -289,7 +366,9 @@ func (e *expander) extends(root *yaml.Node, f *frame) *yaml.Node {
 	}
 	if e.doc.HasOrigin(tv) {
 		o := e.doc.OriginOf(tv)
-		f = &frame{src: o.Src, ctx: f.ctx, depth: f.depth, stack: f.stack, cond: f.cond}
+		copy := *f
+		copy.src = o.Src
+		f = &copy
 		tv = o.Node
 	}
 	tpl, tf, ok := e.resolveRef(tv, f)
@@ -298,14 +377,20 @@ func (e *expander) extends(root *yaml.Node, f *frame) *yaml.Node {
 		return root
 	}
 	tf.ctx.Set("parameters", e.bind(tpl, yamlx.Value(ev, "parameters"), tv, f, tf))
+	e.extendsSources[tpl] = true
+	if !e.checkCycle(tf, tv, f) {
+		e.doc.MarkOpen(root)
+		return root
+	}
 	body := e.node(tpl.Root, tf, "")
 	if !yamlx.IsMap(body) {
 		e.doc.MarkOpen(root)
 		return root
 	}
 	body = e.extends(body, tf)
-	merged := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Line: root.Line, Column: root.Column}
-	e.doc.SetOrigin(merged, f.src, root)
+	merged := e.newNode(yaml.MappingNode, "!!map", root, f)
+	e.choices[merged] = append(e.choices[merged], e.choices[root]...)
+	e.choices[merged] = append(e.choices[merged], e.choices[body]...)
 	yamlx.Pairs(root, func(k, v *yaml.Node) {
 		if k.Value != "extends" {
 			merged.Content = append(merged.Content, k, v)

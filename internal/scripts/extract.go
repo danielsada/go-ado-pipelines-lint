@@ -324,11 +324,11 @@ func Placeholders(s string, declared map[string]bool, lang Lang) string {
 			continue
 		}
 		for i := sp.Start; i < sp.End; i++ {
-			if b[i] != '\n' {
+			if b[i] != '\n' && b[i] != '\r' {
 				b[i] = '_'
 			}
 		}
-		if lang == PowerShell && sp.End-sp.Start > 1 && psExpressionContext(s[:sp.Start]) {
+		if lang == PowerShell && sp.End-sp.Start > 1 && psExpressionContext(string(b[:sp.Start])) {
 			b[sp.Start] = '$'
 		}
 	}
@@ -345,13 +345,75 @@ var psOperators = map[string]bool{"-eq": true, "-ne": true, "-gt": true, "-ge": 
 // and a $variable placeholder is needed. In command-argument mode (paths such as
 // $(Build.SourcesDirectory)/x.ps1) a bare word is right, as a variable would turn "/" into division.
 func psExpressionContext(before string) bool {
+	if psInsideString(before) {
+		return false
+	}
 	t := strings.TrimRight(before, " \t")
 	if t == "" || t[len(t)-1] == '$' {
 		return false
 	}
-	if strings.IndexByte("(,=[+*%!<>", t[len(t)-1]) >= 0 {
+	if strings.IndexByte("(,=[+*%!<>]", t[len(t)-1]) >= 0 {
 		return true
 	}
 	word := t[strings.LastIndexAny(t, " \t\n(")+1:]
 	return psOperators[strings.ToLower(word)]
+}
+
+func psInsideString(s string) bool {
+	type subexpression struct {
+		depth int
+		here  bool
+	}
+	var stack []subexpression
+	var quote byte
+	here, comment, blockComment := false, false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case comment:
+			comment = c != '\n'
+		case blockComment:
+			if strings.HasPrefix(s[i:], "#>") {
+				blockComment = false
+				i++
+			}
+		case c == '`' && quote != '\'':
+			i++
+		case quote == '"' && c == '$' && i+1 < len(s) && s[i+1] == '(':
+			stack = append(stack, subexpression{depth: 1, here: here})
+			quote, here = 0, false
+			i++
+		case here:
+			if c == quote && i+1 < len(s) && s[i+1] == '@' && (i == 0 || s[i-1] == '\n') {
+				quote, here = 0, false
+				i++
+			}
+		case quote != 0:
+			if c == quote {
+				if i+1 < len(s) && s[i+1] == quote {
+					i++
+				} else {
+					quote = 0
+				}
+			}
+		case strings.HasPrefix(s[i:], "<#"):
+			blockComment = true
+			i++
+		case c == '#':
+			comment = true
+		case c == '\'' || c == '"':
+			quote = c
+			here = i > 0 && s[i-1] == '@' && (i+1 == len(s) || s[i+1] == '\r' || s[i+1] == '\n')
+		case len(stack) > 0 && c == '(':
+			stack[len(stack)-1].depth++
+		case len(stack) > 0 && c == ')':
+			stack[len(stack)-1].depth--
+			if stack[len(stack)-1].depth == 0 {
+				here = stack[len(stack)-1].here
+				stack = stack[:len(stack)-1]
+				quote = '"'
+			}
+		}
+	}
+	return quote != 0 || comment || blockComment
 }

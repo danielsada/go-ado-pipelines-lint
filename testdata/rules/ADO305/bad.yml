@@ -1,0 +1,14 @@
+parameters:
+- name: debug
+  type: boolean
+  default: false
+variables:
+  broken: $[ eq(parameters.debug, true) ] # want: ADO305
+  mixed: $[ eq(parameters.debug, ${{ parameters.debug }}) ] # want: ADO305
+steps:
+- script: echo debug
+  condition: and(failed(), eq(parameters.debug, true)) # want: ADO305
+- script: echo index
+  condition: eq(parameters['debug'], true) # want: ADO305
+- script: echo mixed
+  condition: and(eq(${{ parameters.debug }}, true), eq(parameters.debug, true)) # want: ADO305

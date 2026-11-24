@@ -1,0 +1,12 @@
+parameters:
+- name: debug
+  type: boolean
+  default: false
+- name: version
+  type: string
+  default: x
+variables:
+  version: $[ parameters.version ]
+steps:
+- script: echo debug
+  condition: and(failed(), eq(parameters.debug, true))

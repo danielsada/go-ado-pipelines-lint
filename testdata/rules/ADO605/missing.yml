@@ -1,0 +1,17 @@
+trigger: none
+stages:
+- stage: build
+  jobs:
+  - job: a
+    variables:
+      missing: $[ dependencies.missing.outputs['s.flag'] ] # want: ADO605
+    steps:
+    - script: echo hi
+- stage: test
+  dependsOn: build
+  jobs:
+  - job: b
+    variables:
+      version: $[ stageDependencies.deploy_web.deploy_web.outputs['setVersion.version'] ] # want: ADO605
+    steps:
+    - script: echo $(version)
