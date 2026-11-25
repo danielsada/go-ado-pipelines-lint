@@ -456,6 +456,45 @@ func TestConditionalAlternativeBudget(t *testing.T) {
 	}
 }
 
+func TestTemplateExpansionCache(t *testing.T) {
+	templateSteps := ""
+	for i := 0; i < 20; i++ {
+		templateSteps += fmt.Sprintf("- bash: echo step-%d\n", i)
+	}
+	entrySteps := ""
+	for i := 0; i < 100; i++ {
+		entrySteps += "- template: leaf.yml\n  parameters:\n    value: fixed\n"
+	}
+	r := expandLimited(t, memFS{
+		"azure-pipelines.yml": "steps:\n" + entrySteps,
+		"leaf.yml":            "parameters:\n- name: value\n  type: string\nsteps:\n" + templateSteps,
+	}, "azure-pipelines.yml", 10000)
+	if hasRule(r.Diags, RuleLimits, "") {
+		t.Fatalf("identical template inputs should reuse cached expansion work: %v", rules(r.Diags))
+	}
+	if got := len(yamlx.Items(yamlx.Value(r.Doc.Root, "steps"))); got != 2000 {
+		t.Fatalf("cached expansion should preserve every call-site copy: got %d steps", got)
+	}
+}
+
+func TestTemplateExpansionCachePreservesConditionalState(t *testing.T) {
+	r := expandFS(t, memFS{
+		"azure-pipelines.yml": `parameters:
+- name: include
+  type: boolean
+steps:
+- template: leaf.yml
+- ${{ if parameters.include }}:
+  - template: leaf.yml
+`,
+		"leaf.yml": "steps:\n- bash: echo shared\n",
+	}, "azure-pipelines.yml")
+	steps := yamlx.Items(yamlx.Value(r.Doc.Root, "steps"))
+	if len(steps) != 2 || !r.Doc.Conditional(steps[1]) {
+		t.Fatalf("cached template should preserve conditional metadata: %d steps", len(steps))
+	}
+}
+
 func TestExpansionBudgets(t *testing.T) {
 	cases := []struct {
 		name, parameter, next, branches, limit, want string

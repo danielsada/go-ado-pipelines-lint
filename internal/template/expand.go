@@ -80,6 +80,7 @@ type expander struct {
 	diags      []diag.Diagnostic
 	files      map[string]bool
 	limitShown bool
+	cache      map[string]*templateCacheEntry
 	// remote records unresolved references already reported, so each is reported once.
 	remote         map[string]bool
 	work           int
@@ -128,7 +129,7 @@ func ExpandTemplate(src *yamlx.Source, opts Options) *Result {
 
 func expand(src *yamlx.Source, opts Options, pipeline bool) *Result {
 	e := &expander{opts: opts, doc: yamlx.NewDoc(src), files: map[string]bool{}, remote: map[string]bool{},
-		choices: map[*yaml.Node][]*mappingChoice{}, extendsSources: map[*yamlx.Source]bool{}}
+		cache: map[string]*templateCacheEntry{}, choices: map[*yaml.Node][]*mappingChoice{}, extendsSources: map[*yamlx.Source]bool{}}
 	res := &Result{Doc: e.doc, ExtendsSources: e.extendsSources}
 	defer func() { res.Diags = e.diags }()
 	if src.Root == nil {

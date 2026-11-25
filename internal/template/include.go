@@ -1,11 +1,13 @@
 package template
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -59,6 +61,62 @@ func (l *Loader) Add(src *yamlx.Source) {
 }
 
 var bodyKeys = []string{"stages", "jobs", "steps", "variables"}
+
+type templateCacheEntry struct {
+	items []*yaml.Node
+	open  bool
+}
+
+func cacheValueKey(v expr.Value) string {
+	switch v.Kind {
+	case expr.KUnknown:
+		return "u"
+	case expr.KNull:
+		return "n"
+	case expr.KBool:
+		return "b:" + strconv.FormatBool(v.B)
+	case expr.KNumber:
+		return "f:" + strconv.FormatFloat(v.N, 'g', -1, 64)
+	case expr.KString:
+		return "s:" + strconv.Quote(v.S)
+	case expr.KVersion:
+		return "v:" + strconv.Quote(v.S)
+	case expr.KArray:
+		var b strings.Builder
+		b.WriteString("a:[")
+		for i, it := range v.Arr {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(cacheValueKey(it))
+		}
+		b.WriteByte(']')
+		return b.String()
+	case expr.KObject:
+		kvs := append([]expr.KV(nil), v.Obj...)
+		var b strings.Builder
+		b.WriteString("o:{")
+		for i, kv := range kvs {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(strconv.Quote(strings.ToLower(kv.Key)))
+			b.WriteByte(':')
+			b.WriteString(cacheValueKey(kv.Val))
+		}
+		b.WriteByte('}')
+		return b.String()
+	}
+	return "u"
+}
+
+func (e *expander) templateCacheKey(tpl *yamlx.Source, bodyKey string, tf *frame) string {
+	params, _ := tf.ctx.Lookup("parameters")
+	raw := fmt.Sprintf("%s\x00%s\x00%s\x00%t", tpl.Abs, tf.repoRoot, bodyKey, tf.cond)
+	raw += "\x00" + cacheValueKey(params)
+	sum := sha256.Sum256([]byte(raw))
+	return fmt.Sprintf("%x", sum)
+}
 
 func isBodyKey(k string) bool {
 	for _, b := range bodyKeys {
@@ -269,12 +327,22 @@ func (e *expander) include(item *yaml.Node, f *frame, key string) ([]*yaml.Node,
 		}
 		return nil, bodyKey == ""
 	}
+	cacheable := !slices.Contains(f.stack, tpl.Abs)
+	cacheKey := e.templateCacheKey(tpl, bodyKey, tf)
+	if cacheable {
+		if cached, ok := e.cache[cacheKey]; ok {
+			return cached.items, !cached.open
+		}
+	}
 	expanded := e.node(body, tf, bodyKey)
 	if bodyKey == "variables" && yamlx.IsMap(expanded) {
 		expanded = e.varsToList(expanded, tf)
 	}
 	if !yamlx.IsSeq(expanded) {
 		return nil, false
+	}
+	if cacheable && !e.exhausted {
+		e.cache[cacheKey] = &templateCacheEntry{items: expanded.Content, open: e.doc.Open(expanded)}
 	}
 	return expanded.Content, !e.doc.Open(expanded)
 }
@@ -389,26 +457,26 @@ func (e *expander) extends(root *yaml.Node, f *frame) *yaml.Node {
 		e.doc.MarkOpen(root)
 		return root
 	}
-	body := e.node(tpl.Root, tf, "")
-	if !yamlx.IsMap(body) {
+	bodyNode := e.node(tpl.Root, tf, "")
+	if !yamlx.IsMap(bodyNode) {
 		e.doc.MarkOpen(root)
 		return root
 	}
-	body = e.extends(body, tf)
+	bodyNode = e.extends(bodyNode, tf)
 	merged := e.newNode(yaml.MappingNode, "!!map", root, f)
 	e.choices[merged] = append(e.choices[merged], e.choices[root]...)
-	e.choices[merged] = append(e.choices[merged], e.choices[body]...)
+	e.choices[merged] = append(e.choices[merged], e.choices[bodyNode]...)
 	yamlx.Pairs(root, func(k, v *yaml.Node) {
 		if k.Value != "extends" {
 			merged.Content = append(merged.Content, k, v)
 		}
 	})
-	yamlx.Pairs(body, func(k, v *yaml.Node) {
+	yamlx.Pairs(bodyNode, func(k, v *yaml.Node) {
 		if k.Value != "parameters" && !yamlx.Has(merged, k.Value) {
 			merged.Content = append(merged.Content, k, v)
 		}
 	})
-	if e.doc.Open(body) {
+	if e.doc.Open(bodyNode) {
 		e.doc.MarkOpen(merged)
 	}
 	return merged
