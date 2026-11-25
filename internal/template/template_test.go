@@ -456,6 +456,116 @@ func TestConditionalAlternativeBudget(t *testing.T) {
 	}
 }
 
+func TestTemplateExpansionCache(t *testing.T) {
+	templateSteps := ""
+	for i := 0; i < 20; i++ {
+		templateSteps += fmt.Sprintf("- bash: echo step-%d\n", i)
+	}
+	entrySteps := ""
+	for i := 0; i < 100; i++ {
+		entrySteps += "- template: leaf.yml\n  parameters:\n    value: fixed\n"
+	}
+	r := expandLimited(t, memFS{
+		"azure-pipelines.yml": "steps:\n" + entrySteps,
+		"leaf.yml":            "parameters:\n- name: value\n  type: string\nsteps:\n" + templateSteps,
+	}, "azure-pipelines.yml", 10000)
+	if hasRule(r.Diags, RuleLimits, "") {
+		t.Fatalf("identical template inputs should reuse cached expansion work: %v", rules(r.Diags))
+	}
+	if got := len(yamlx.Items(yamlx.Value(r.Doc.Root, "steps"))); got != 2000 {
+		t.Fatalf("cached expansion should preserve every call-site copy: got %d steps", got)
+	}
+}
+
+func TestTemplateExpansionCachePreservesConditionalState(t *testing.T) {
+	r := expandFS(t, memFS{
+		"azure-pipelines.yml": `parameters:
+- name: include
+  type: boolean
+steps:
+- ${{ if parameters.include }}:
+  - template: leaf.yml
+    parameters:
+      payload:
+        ${{ if parameters.include }}:
+          KEY: value
+- template: leaf.yml
+  parameters:
+    payload:
+      KEY: value
+`,
+		"leaf.yml": `parameters:
+- name: payload
+  type: object
+steps:
+- bash: echo shared
+  env: ${{ parameters.payload }}
+`,
+	}, "azure-pipelines.yml")
+	steps := yamlx.Items(yamlx.Value(r.Doc.Root, "steps"))
+	if len(steps) != 2 {
+		t.Fatalf("expected two included steps, got %d", len(steps))
+	}
+	firstEnv, secondEnv := yamlx.Value(steps[0], "env"), yamlx.Value(steps[1], "env")
+	if firstEnv == nil || secondEnv == nil || !r.Doc.Conditional(firstEnv.Content[1]) || r.Doc.Conditional(secondEnv.Content[1]) {
+		t.Fatalf("cached parameter content should preserve per-call conditional metadata")
+	}
+}
+
+func TestTemplateExpansionCachePreservesObjectKeyCase(t *testing.T) {
+	r := expandFS(t, memFS{
+		"azure-pipelines.yml": `steps:
+- template: leaf.yml
+  parameters:
+    payload:
+      job: Build
+- template: leaf.yml
+  parameters:
+    payload:
+      Job: Build
+`,
+		"leaf.yml": `parameters:
+- name: payload
+  type: object
+steps:
+- bash: echo shared
+  env: ${{ parameters.payload }}
+`,
+	}, "azure-pipelines.yml")
+	steps := yamlx.Items(yamlx.Value(r.Doc.Root, "steps"))
+	if len(steps) != 2 {
+		t.Fatalf("expected two included steps, got %d", len(steps))
+	}
+	firstEnv, secondEnv := yamlx.Value(steps[0], "env"), yamlx.Value(steps[1], "env")
+	if firstEnv.Content[0].Value != "job" || secondEnv.Content[0].Value != "Job" {
+		t.Fatalf("cached expansion should preserve input object key casing: %q, %q", firstEnv.Content[0].Value, secondEnv.Content[0].Value)
+	}
+}
+
+func TestTemplateExpansionCacheRespectsNestingDepth(t *testing.T) {
+	files := memFS{
+		"azure-pipelines.yml": "steps:\n- template: common.yml\n- template: recurse.yml\n  parameters:\n    path: x\n",
+		"common.yml":          "steps:\n- template: next.yml\n",
+		"next.yml":            "steps:\n- template: last.yml\n",
+		"last.yml":            "steps:\n- bash: echo last\n",
+		"recurse.yml": fmt.Sprintf(`parameters:
+- name: path
+  type: string
+steps:
+- ${{ if lt(length(parameters.path), %d) }}:
+  - template: recurse.yml
+    parameters:
+      path: ${{ format('{0}x', parameters.path) }}
+- ${{ if eq(length(parameters.path), %d) }}:
+  - template: common.yml
+`, MaxDepth-1, MaxDepth-1),
+	}
+	r := expandFS(t, files, "azure-pipelines.yml")
+	if !hasRule(r.Diags, RuleLimits, "levels deep") {
+		t.Fatalf("deep cache reuse must still report the nesting limit: %v", rules(r.Diags))
+	}
+}
+
 func TestExpansionBudgets(t *testing.T) {
 	cases := []struct {
 		name, parameter, next, branches, limit, want string
