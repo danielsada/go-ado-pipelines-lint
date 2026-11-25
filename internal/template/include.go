@@ -67,53 +67,61 @@ type templateCacheEntry struct {
 	open  bool
 }
 
-func cacheValueKey(v expr.Value) string {
+func cacheValueKey(v expr.Value, doc *yamlx.Doc) string {
+	conditional, open := "0", "0"
+	if v.Node != nil && doc.Conditional(v.Node) {
+		conditional = "1"
+	}
+	if v.Node != nil && doc.Open(v.Node) {
+		open = "1"
+	}
+	metadata := "c" + conditional + "o" + open + ":"
 	switch v.Kind {
 	case expr.KUnknown:
-		return "u"
+		return metadata + "u"
 	case expr.KNull:
-		return "n"
+		return metadata + "n"
 	case expr.KBool:
-		return "b:" + strconv.FormatBool(v.B)
+		return metadata + "b:" + strconv.FormatBool(v.B)
 	case expr.KNumber:
-		return "f:" + strconv.FormatFloat(v.N, 'g', -1, 64)
+		return metadata + "f:" + strconv.FormatFloat(v.N, 'g', -1, 64)
 	case expr.KString:
-		return "s:" + strconv.Quote(v.S)
+		return metadata + "s:" + strconv.Quote(v.S)
 	case expr.KVersion:
-		return "v:" + strconv.Quote(v.S)
+		return metadata + "v:" + strconv.Quote(v.S)
 	case expr.KArray:
 		var b strings.Builder
-		b.WriteString("a:[")
+		b.WriteString(metadata + "a:[")
 		for i, it := range v.Arr {
 			if i > 0 {
 				b.WriteByte(',')
 			}
-			b.WriteString(cacheValueKey(it))
+			b.WriteString(cacheValueKey(it, doc))
 		}
 		b.WriteByte(']')
 		return b.String()
 	case expr.KObject:
 		kvs := append([]expr.KV(nil), v.Obj...)
 		var b strings.Builder
-		b.WriteString("o:{")
+		b.WriteString(metadata + "o:{")
 		for i, kv := range kvs {
 			if i > 0 {
 				b.WriteByte(',')
 			}
-			b.WriteString(strconv.Quote(strings.ToLower(kv.Key)))
+			b.WriteString(strconv.Quote(kv.Key))
 			b.WriteByte(':')
-			b.WriteString(cacheValueKey(kv.Val))
+			b.WriteString(cacheValueKey(kv.Val, doc))
 		}
 		b.WriteByte('}')
 		return b.String()
 	}
-	return "u"
+	return metadata + "u"
 }
 
 func (e *expander) templateCacheKey(tpl *yamlx.Source, bodyKey string, tf *frame) string {
 	params, _ := tf.ctx.Lookup("parameters")
-	raw := fmt.Sprintf("%s\x00%s\x00%s\x00%t", tpl.Abs, tf.repoRoot, bodyKey, tf.cond)
-	raw += "\x00" + cacheValueKey(params)
+	raw := fmt.Sprintf("%s\x00%s\x00%s\x00%t\x00%d", tpl.Abs, tf.repoRoot, bodyKey, tf.cond, tf.depth)
+	raw += "\x00" + cacheValueKey(params, e.doc)
 	sum := sha256.Sum256([]byte(raw))
 	return fmt.Sprintf("%x", sum)
 }

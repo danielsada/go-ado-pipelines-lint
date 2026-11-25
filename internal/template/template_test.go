@@ -483,15 +483,86 @@ func TestTemplateExpansionCachePreservesConditionalState(t *testing.T) {
 - name: include
   type: boolean
 steps:
-- template: leaf.yml
 - ${{ if parameters.include }}:
   - template: leaf.yml
+    parameters:
+      payload:
+        ${{ if parameters.include }}:
+          KEY: value
+- template: leaf.yml
+  parameters:
+    payload:
+      KEY: value
 `,
-		"leaf.yml": "steps:\n- bash: echo shared\n",
+		"leaf.yml": `parameters:
+- name: payload
+  type: object
+steps:
+- bash: echo shared
+  env: ${{ parameters.payload }}
+`,
 	}, "azure-pipelines.yml")
 	steps := yamlx.Items(yamlx.Value(r.Doc.Root, "steps"))
-	if len(steps) != 2 || !r.Doc.Conditional(steps[1]) {
-		t.Fatalf("cached template should preserve conditional metadata: %d steps", len(steps))
+	if len(steps) != 2 {
+		t.Fatalf("expected two included steps, got %d", len(steps))
+	}
+	firstEnv, secondEnv := yamlx.Value(steps[0], "env"), yamlx.Value(steps[1], "env")
+	if firstEnv == nil || secondEnv == nil || !r.Doc.Conditional(firstEnv.Content[1]) || r.Doc.Conditional(secondEnv.Content[1]) {
+		t.Fatalf("cached parameter content should preserve per-call conditional metadata")
+	}
+}
+
+func TestTemplateExpansionCachePreservesObjectKeyCase(t *testing.T) {
+	r := expandFS(t, memFS{
+		"azure-pipelines.yml": `steps:
+- template: leaf.yml
+  parameters:
+    payload:
+      job: Build
+- template: leaf.yml
+  parameters:
+    payload:
+      Job: Build
+`,
+		"leaf.yml": `parameters:
+- name: payload
+  type: object
+steps:
+- bash: echo shared
+  env: ${{ parameters.payload }}
+`,
+	}, "azure-pipelines.yml")
+	steps := yamlx.Items(yamlx.Value(r.Doc.Root, "steps"))
+	if len(steps) != 2 {
+		t.Fatalf("expected two included steps, got %d", len(steps))
+	}
+	firstEnv, secondEnv := yamlx.Value(steps[0], "env"), yamlx.Value(steps[1], "env")
+	if firstEnv.Content[0].Value != "job" || secondEnv.Content[0].Value != "Job" {
+		t.Fatalf("cached expansion should preserve input object key casing: %q, %q", firstEnv.Content[0].Value, secondEnv.Content[0].Value)
+	}
+}
+
+func TestTemplateExpansionCacheRespectsNestingDepth(t *testing.T) {
+	files := memFS{
+		"azure-pipelines.yml": "steps:\n- template: common.yml\n- template: recurse.yml\n  parameters:\n    path: x\n",
+		"common.yml":          "steps:\n- template: next.yml\n",
+		"next.yml":            "steps:\n- template: last.yml\n",
+		"last.yml":            "steps:\n- bash: echo last\n",
+		"recurse.yml": fmt.Sprintf(`parameters:
+- name: path
+  type: string
+steps:
+- ${{ if lt(length(parameters.path), %d) }}:
+  - template: recurse.yml
+    parameters:
+      path: ${{ format('{0}x', parameters.path) }}
+- ${{ if eq(length(parameters.path), %d) }}:
+  - template: common.yml
+`, MaxDepth-1, MaxDepth-1),
+	}
+	r := expandFS(t, files, "azure-pipelines.yml")
+	if !hasRule(r.Diags, RuleLimits, "levels deep") {
+		t.Fatalf("deep cache reuse must still report the nesting limit: %v", rules(r.Diags))
 	}
 }
 
